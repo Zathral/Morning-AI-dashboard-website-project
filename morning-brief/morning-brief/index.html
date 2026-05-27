@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Morning Brief</title>
+
+  <!-- Fonts: Space Mono (data), Playfair Display (brief prose), DM Sans (UI) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Background grid texture -->
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="header-time">
+      <span id="clock" class="clock">--:--:--</span>
+      <span id="date-str" class="date-str">---</span>
+    </div>
+
+    <div class="header-brand">
+      <span class="brand-pip"></span>
+      Morning Brief
+    </div>
+
+    <div class="header-actions">
+      <button id="name-btn" class="btn-ghost" title="Change name">
+        ✦ <span id="display-name">—</span>
+      </button>
+      <button id="refresh-btn" class="btn-ghost btn-refresh" title="Refresh all data">
+        <span class="refresh-icon">↻</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Main ────────────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- 1 · AI Morning Brief (hero) -->
+    <section class="brief-section" id="brief-section" aria-label="AI Morning Brief">
+      <div class="brief-glow" aria-hidden="true"></div>
+      <div class="brief-inner">
+        <div class="brief-label">
+          <span class="brief-pip"></span>
+          AI MORNING BRIEF
+        </div>
+
+        <p class="brief-text" id="brief-text" aria-live="polite">
+          <span class="skel-line" style="width:88%"></span>
+          <span class="skel-line" style="width:76%"></span>
+          <span class="skel-line" style="width:55%"></span>
+        </p>
+
+        <div class="brief-meta" id="brief-meta">
+          <span id="brief-sentiment" class="sentiment-chip" style="display:none"></span>
+          <span id="brief-theme"     class="brief-theme"   style="display:none"></span>
+          <span id="brief-ts"        class="brief-ts"      style="display:none"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2 · News + Weather (two-col) -->
+    <div class="two-col">
+
+      <!-- News -->
+      <section class="card" id="news-section" aria-label="Top Headlines">
+        <div class="card-header">
+          <h2 class="section-title">Headlines</h2>
+          <span id="news-theme-badge" class="theme-badge" style="display:none"></span>
+        </div>
+
+        <ul id="news-list" class="news-list" aria-live="polite">
+          <li class="skel-news"></li>
+          <li class="skel-news"></li>
+          <li class="skel-news"></li>
+          <li class="skel-news"></li>
+          <li class="skel-news"></li>
+        </ul>
+
+        <div id="news-entities" class="entity-row" style="display:none"></div>
+      </section>
+
+      <!-- Weather -->
+      <section class="card weather-card" id="weather-section" aria-label="Singapore Weather">
+        <div class="card-header">
+          <h2 class="section-title">Singapore</h2>
+          <span class="section-sub">Weather</span>
+        </div>
+
+        <div id="weather-main" class="weather-main" aria-live="polite">
+          <div class="skel-weather"></div>
+        </div>
+
+        <div id="weather-hourly" class="weather-hourly"></div>
+
+        <div id="weather-stats" class="weather-stats" style="display:none">
+          <div class="wstat" id="wstat-rain">
+            <span class="wstat-label">Rain Prob.</span>
+            <span class="wstat-val" id="wval-rain">—</span>
+          </div>
+          <div class="wstat" id="wstat-humidity">
+            <span class="wstat-label">Humidity</span>
+            <span class="wstat-val" id="wval-humidity">—</span>
+          </div>
+          <div class="wstat" id="wstat-wind">
+            <span class="wstat-label">Wind</span>
+            <span class="wstat-val" id="wval-wind">—</span>
+          </div>
+          <div class="wstat" id="wstat-sun">
+            <span class="wstat-label">Sunrise</span>
+            <span class="wstat-val" id="wval-sun">—</span>
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /two-col -->
+
+    <!-- 3 · Market Overview -->
+    <section class="card market-section" id="market-section" aria-label="Market Overview">
+      <div class="card-header">
+        <h2 class="section-title">Markets</h2>
+        <span class="section-sub">Delayed · 15 min</span>
+      </div>
+
+      <div class="market-grid" id="market-grid" aria-live="polite">
+        <div class="market-card skel-card"></div>
+        <div class="market-card skel-card"></div>
+        <div class="market-card skel-card"></div>
+        <div class="market-card skel-card"></div>
+        <div class="market-card skel-card"></div>
+        <div class="market-card skel-card"></div>
+      </div>
+    </section>
+
+    <!-- 4 · ePortfolio panel -->
+    <section class="card about-section">
+      <details>
+        <summary class="about-summary">
+          <span class="about-badge">ePortfolio</span>
+          <span>About This Project</span>
+          <span class="about-chevron">›</span>
+        </summary>
+        <div class="about-body">
+          <p>
+            Built for an AI &amp; Data Engineering module at Singapore Polytechnic.
+            Demonstrates real-time API integration, AI summarisation, and full-stack
+            Python web development deployed on Vercel.
+          </p>
+          <div class="tech-pills">
+            <span class="pill">FastAPI</span>
+            <span class="pill">Python</span>
+            <span class="pill">Gemini 1.5 Flash</span>
+            <span class="pill">yfinance</span>
+            <span class="pill">Open-Meteo</span>
+            <span class="pill">Supabase</span>
+            <span class="pill">RSS Feeds</span>
+            <span class="pill">Vercel</span>
+          </div>
+          <div class="feature-grid">
+            <div class="feat">✦ AI morning brief generation (Gemini)</div>
+            <div class="feat">✦ News aggregation &amp; NLP sentiment</div>
+            <div class="feat">✦ Live market data + sparkline charts</div>
+            <div class="feat">✦ Singapore weather via Open-Meteo</div>
+            <div class="feat">✦ Supabase caching layer</div>
+            <div class="feat">✦ Progressive loading &amp; skeleton UI</div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+  </main>
+
+  <!-- ── Name Modal ───────────────────────────────────────────────────────── -->
+  <div id="name-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <h3 class="modal-title">What's your name?</h3>
+      <p class="modal-sub">Used in your personalised AI brief.</p>
+      <input
+        id="name-input"
+        type="text"
+        class="modal-input"
+        placeholder="e.g. Jeremy"
+        maxlength="30"
+        autocomplete="off"
+      />
+      <div class="modal-actions">
+        <button id="name-cancel" class="btn-ghost">Cancel</button>
+        <button id="name-save"   class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
