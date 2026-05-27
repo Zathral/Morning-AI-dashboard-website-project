@@ -1,0 +1,7 @@
+{
+  "name": "morning-brief",
+  "version": "1.0.0",
+  "scripts": {
+    "vercel-build": "pip install -r requirements.txt"
+  }
+}
