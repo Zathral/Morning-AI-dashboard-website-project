@@ -348,6 +348,8 @@ HEADLINES:
     await cache_set("brief", result, ttl_minutes=30)
     return result
 
-
+@app.get("/")
+async def root():
+    return {"message": "API is running", "status": "ok"}
 # ─── Vercel ASGI entry point ──────────────────────────────────────────────────
 handler = Mangum(app, lifespan="off")
