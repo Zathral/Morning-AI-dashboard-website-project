@@ -247,14 +247,22 @@ async def get_weather():
     cur  = data.get("current",{})
     hrly = data.get("hourly",{})
     dly  = data.get("daily",{})
-    now_str = datetime.now().strftime("%Y-%m-%dT%H:00")
-    hourly_fc, started, count = [], False, 0
-    for i, t in enumerate(hrly.get("time",[])):
-        if t >= now_str: started = True
-        if started and count < 8:
-            hourly_fc.append({"time":t,"temp":hrly["temperature_2m"][i],
-                               "rain_prob":hrly["precipitation_probability"][i],
-                               "weather_code":hrly["weather_code"][i]})
+    # Next 8 hours from now
+    now = datetime.now()
+    hourly_forecast, count = [], 0
+    
+    for i, t in enumerate(hrly.get("time", [])):
+        # Parse the time string to datetime
+        forecast_time = datetime.fromisoformat(t.replace('Z', '+00:00'))
+        
+        # Only include future times
+        if forecast_time > now and count < 8:
+            hourly_forecast.append({
+                "time": t,
+                "temp": hrly["temperature_2m"][i],
+                "rain_prob": hrly["precipitation_probability"][i],
+                "weather_code": hrly["weather_code"][i],
+            })
             count += 1
     result = {
         "current":{"temperature":cur.get("temperature_2m"),"feels_like":cur.get("apparent_temperature"),
