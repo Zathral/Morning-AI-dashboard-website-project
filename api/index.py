@@ -244,7 +244,7 @@ async def get_weather():
         "&hourly=temperature_2m,precipitation_probability,weather_code"
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
         "precipitation_probability_max,sunrise,sunset"
-        "&timezone=Asia%2FSingapore&forecast_days=2"  # ← CHANGE: 1 to 2
+        "&timezone=Asia%2FSingapore&forecast_days=2"
     )
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
@@ -254,16 +254,22 @@ async def get_weather():
     hrly = data.get("hourly", {})
     dly = data.get("daily", {})
 
-    # Get current time in Singapore timezone
+    # Get current time
     now = datetime.now()
     
-    # Filter for next 8 hours (including crossing midnight)
+    # Find the FIRST future hour (not current hour)
     hourly_forecast = []
+    found_future = False
+    
     for i, t in enumerate(hrly.get("time", [])):
         forecast_time = datetime.fromisoformat(t)
         
-        # Only include future hours (or current hour if within 30 mins)
-        if forecast_time >= now:
+        # Start collecting from the first hour that is in the future
+        if not found_future and forecast_time > now:
+            found_future = True
+        
+        # Once we found future hours, start collecting
+        if found_future and len(hourly_forecast) < 8:
             hourly_forecast.append({
                 "time": t,
                 "temp": hrly["temperature_2m"][i],
@@ -271,20 +277,25 @@ async def get_weather():
                 "weather_code": hrly["weather_code"][i],
             })
         
-        # Stop after we have 8 future hours
+        # Stop once we have 8 hours
         if len(hourly_forecast) >= 8:
             break
-    # Ensure we always have at least 8 items (prevents frontend errors)
-    while len(hourly_forecast) < 8 and len(hrly.get("time", [])) > len(hourly_forecast):
-        # Add more hours even if slightly in the past (fallback)
-        idx = len(hourly_forecast)
-        if idx < len(hrly.get("time", [])):
-            hourly_forecast.append({
-                "time": hrly["time"][idx],
-                "temp": hrly["temperature_2m"][idx],
-                "rain_prob": hrly["precipitation_probability"][idx],
-                "weather_code": hrly["weather_code"][idx],
-            })
+    
+    # If we couldn't find enough future hours (e.g., late at night), 
+    # wrap around to tomorrow's data
+    if len(hourly_forecast) < 8:
+        # Start from beginning of tomorrow's data
+        for i, t in enumerate(hrly.get("time", [])):
+            forecast_time = datetime.fromisoformat(t)
+            # Look for first hour of tomorrow
+            if forecast_time.date() > now.date() and len(hourly_forecast) < 8:
+                hourly_forecast.append({
+                    "time": t,
+                    "temp": hrly["temperature_2m"][i],
+                    "rain_prob": hrly["precipitation_probability"][i],
+                    "weather_code": hrly["weather_code"][i],
+                })
+
     result = {
         "current": {
             "temperature": cur.get("temperature_2m"),
@@ -302,7 +313,7 @@ async def get_weather():
         },
         "hourly": hourly_forecast,
     }
-    await cache_set("weather", result, ttl_minutes=30)
+    await cache_set("weather", result, ttl_minutes=15)
     return result
 
 @app.get("/api/market")
