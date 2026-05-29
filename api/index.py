@@ -314,6 +314,8 @@ async def get_weather():
         "hourly": hourly_forecast,
     }
     await cache_set("weather", result, ttl_minutes=15)
+    # Add this right before 'return result'
+    print(f"DEBUG: Returning {len(hourly_forecast)} hours, first hour: {hourly_forecast[0]['time'] if hourly_forecast else 'none'}")
     return result
 
 @app.get("/api/market")
