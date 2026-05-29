@@ -244,7 +244,7 @@ async def get_weather():
         "&hourly=temperature_2m,precipitation_probability,weather_code"
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
         "precipitation_probability_max,sunrise,sunset"
-        "&timezone=Asia%2FSingapore&forecast_days=1"
+        "&timezone=Asia%2FSingapore&forecast_days=2"  # ← CHANGE: 1 to 2
     )
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
@@ -254,39 +254,37 @@ async def get_weather():
     hrly = data.get("hourly", {})
     dly = data.get("daily", {})
 
-    # SAFE FIX: Next 8 hours using datetime comparison
+    # Get current time in Singapore timezone
     now = datetime.now()
-    hourly_forecast = []
     
+    # Filter for next 8 hours (including crossing midnight)
+    hourly_forecast = []
     for i, t in enumerate(hrly.get("time", [])):
-        # Parse the time string (Open-Meteo returns ISO format)
         forecast_time = datetime.fromisoformat(t)
         
-        # Show future hours (including current hour if within 30 mins)
-        time_diff = (forecast_time - now).total_seconds() / 3600
-        
-        if time_diff >= -0.5 and len(hourly_forecast) < 8:  # -0.5 = within last 30 mins
+        # Only include future hours (or current hour if within 30 mins)
+        if forecast_time >= now:
             hourly_forecast.append({
                 "time": t,
                 "temp": hrly["temperature_2m"][i],
                 "rain_prob": hrly["precipitation_probability"][i],
                 "weather_code": hrly["weather_code"][i],
             })
-
-    # Ensure we always have at least 8 items (pad with next day's data if needed)
-    # This prevents the brief endpoint from breaking
-    if len(hourly_forecast) < 8 and len(hrly.get("time", [])) > len(hourly_forecast):
-        # Add more hours from the same data
-        remaining = min(8 - len(hourly_forecast), len(hrly.get("time", [])) - len(hourly_forecast))
-        for i in range(len(hourly_forecast), len(hourly_forecast) + remaining):
-            if i < len(hrly.get("time", [])):
-                hourly_forecast.append({
-                    "time": hrly["time"][i],
-                    "temp": hrly["temperature_2m"][i],
-                    "rain_prob": hrly["precipitation_probability"][i],
-                    "weather_code": hrly["weather_code"][i],
-                })
-
+        
+        # Stop after we have 8 future hours
+        if len(hourly_forecast) >= 8:
+            break
+    # Ensure we always have at least 8 items (prevents frontend errors)
+    while len(hourly_forecast) < 8 and len(hrly.get("time", [])) > len(hourly_forecast):
+        # Add more hours even if slightly in the past (fallback)
+        idx = len(hourly_forecast)
+        if idx < len(hrly.get("time", [])):
+            hourly_forecast.append({
+                "time": hrly["time"][idx],
+                "temp": hrly["temperature_2m"][idx],
+                "rain_prob": hrly["precipitation_probability"][idx],
+                "weather_code": hrly["weather_code"][idx],
+            })
     result = {
         "current": {
             "temperature": cur.get("temperature_2m"),
@@ -302,7 +300,7 @@ async def get_weather():
             "sunrise": (dly.get("sunrise") or [None])[0],
             "sunset": (dly.get("sunset") or [None])[0],
         },
-        "hourly": hourly_forecast,  # Always at least 8 items
+        "hourly": hourly_forecast,
     }
     await cache_set("weather", result, ttl_minutes=30)
     return result
