@@ -1,8 +1,6 @@
-# Morning Brief 🌅
+# Morning Brief
 
 A personalised AI morning dashboard built with FastAPI, Gemini, and plain HTML/CSS/JS. Deployed on Vercel.
-
-Built for an AI & Data Engineering ePortfolio — Singapore Polytechnic.
 
 ---
 
@@ -69,73 +67,11 @@ python -m http.server 3000
 
 ---
 
-## Supabase Setup
-
-1. Go to [supabase.com](https://supabase.com) → New Project
-2. Open the **SQL Editor** and run:
-
-```sql
-CREATE TABLE cache (
-  key        TEXT PRIMARY KEY,
-  data       JSONB        NOT NULL,
-  expires_at TIMESTAMPTZ  NOT NULL,
-  created_at TIMESTAMPTZ  DEFAULT NOW()
-);
-```
-
-3. Copy your **Project URL** and **anon public key** from Settings → API into `.env`
-
----
-
 ## API Keys
 
-### Gemini (Free)
-1. Go to [aistudio.google.com](https://aistudio.google.com/app/apikey)
-2. Click **Create API Key**
-3. Paste into `GEMINI_API_KEY`
-
-Free tier: 15 requests/min, 1M tokens/day — more than enough.
-
-### Weather
-No key needed — uses [Open-Meteo](https://open-meteo.com/) (completely free).
-
-### Market Data
-No key needed — uses `yfinance` (Yahoo Finance scraper).
-
----
 
 ## Deploy to Vercel
 
-### Option A — Vercel CLI (recommended)
-
-```bash
-npm i -g vercel
-vercel login
-vercel
-```
-
-During setup:
-- Framework: **Other**
-- Root directory: `.` (current folder)
-- Build command: leave blank
-- Output directory: leave blank
-
-### Option B — GitHub + Vercel Dashboard
-
-1. Push your project to GitHub
-2. Go to [vercel.com](https://vercel.com) → New Project → Import your repo
-3. Framework: **Other**, everything else default
-
-### Adding Environment Variables on Vercel
-
-Vercel Dashboard → Your Project → **Settings → Environment Variables**
-
-Add:
-- `GEMINI_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-
----
 
 ## API Endpoints
 
