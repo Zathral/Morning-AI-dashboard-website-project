@@ -232,42 +232,88 @@ async def health():
 @app.get("/api/weather")
 async def get_weather():
     cached = await cache_get("weather")
-    if cached: return cached
-    lat, lon = 1.3521, 103.8198
+    if cached:
+        return cached
+
+    lat, lon = 1.3521, 103.8198  # Singapore
     url = (
         "https://api.open-meteo.com/v1/forecast"
         f"?latitude={lat}&longitude={lon}"
-        "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature"
+        "&current=temperature_2m,relative_humidity_2m,weather_code,"
+        "wind_speed_10m,apparent_temperature"
         "&hourly=temperature_2m,precipitation_probability,weather_code"
-        "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"
-        "&timezone=Asia%2FSingapore&forecast_days=1"
+        "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
+        "precipitation_probability_max,sunrise,sunset"
+        "&timezone=Asia%2FSingapore&forecast_days=2"
     )
     async with httpx.AsyncClient(timeout=10.0) as client:
-        data = (await client.get(url)).json()
-    cur  = data.get("current",{})
-    hrly = data.get("hourly",{})
-    dly  = data.get("daily",{})
-    now_str = datetime.now().strftime("%Y-%m-%dT%H:00")
-    hourly_fc, started, count = [], False, 0
-    for i, t in enumerate(hrly.get("time",[])):
-        if t >= now_str: started = True
-        if started and count < 8:
-            hourly_fc.append({"time":t,"temp":hrly["temperature_2m"][i],
-                               "rain_prob":hrly["precipitation_probability"][i],
-                               "weather_code":hrly["weather_code"][i]})
-            count += 1
+        resp = await client.get(url)
+        data = resp.json()
+
+    cur = data.get("current", {})
+    hrly = data.get("hourly", {})
+    dly = data.get("daily", {})
+
+    # Get current time
+    now = datetime.now()
+    
+    # Find the FIRST future hour (not current hour)
+    hourly_forecast = []
+    found_future = False
+    
+    for i, t in enumerate(hrly.get("time", [])):
+        forecast_time = datetime.fromisoformat(t)
+        
+        # Start collecting from the first hour that is in the future
+        if not found_future and forecast_time > now:
+            found_future = True
+        
+        # Once we found future hours, start collecting
+        if found_future and len(hourly_forecast) < 8:
+            hourly_forecast.append({
+                "time": t,
+                "temp": hrly["temperature_2m"][i],
+                "rain_prob": hrly["precipitation_probability"][i],
+                "weather_code": hrly["weather_code"][i],
+            })
+        
+        # Stop once we have 8 hours
+        if len(hourly_forecast) >= 8:
+            break
+    
+    # If we couldn't find enough future hours (e.g., late at night), 
+    # wrap around to tomorrow's data
+    if len(hourly_forecast) < 8:
+        # Start from beginning of tomorrow's data
+        for i, t in enumerate(hrly.get("time", [])):
+            forecast_time = datetime.fromisoformat(t)
+            # Look for first hour of tomorrow
+            if forecast_time.date() > now.date() and len(hourly_forecast) < 8:
+                hourly_forecast.append({
+                    "time": t,
+                    "temp": hrly["temperature_2m"][i],
+                    "rain_prob": hrly["precipitation_probability"][i],
+                    "weather_code": hrly["weather_code"][i],
+                })
+
     result = {
-        "current":{"temperature":cur.get("temperature_2m"),"feels_like":cur.get("apparent_temperature"),
-                   "humidity":cur.get("relative_humidity_2m"),"weather_code":cur.get("weather_code"),
-                   "wind_speed":cur.get("wind_speed_10m")},
-        "daily":{"max_temp":(dly.get("temperature_2m_max") or [None])[0],
-                 "min_temp":(dly.get("temperature_2m_min") or [None])[0],
-                 "rain_prob":(dly.get("precipitation_probability_max") or [None])[0],
-                 "sunrise":(dly.get("sunrise") or [None])[0],
-                 "sunset":(dly.get("sunset") or [None])[0]},
-        "hourly": hourly_fc,
+        "current": {
+            "temperature": cur.get("temperature_2m"),
+            "feels_like": cur.get("apparent_temperature"),
+            "humidity": cur.get("relative_humidity_2m"),
+            "weather_code": cur.get("weather_code"),
+            "wind_speed": cur.get("wind_speed_10m"),
+        },
+        "daily": {
+            "max_temp": (dly.get("temperature_2m_max") or [None])[0],
+            "min_temp": (dly.get("temperature_2m_min") or [None])[0],
+            "rain_prob": (dly.get("precipitation_probability_max") or [None])[0],
+            "sunrise": (dly.get("sunrise") or [None])[0],
+            "sunset": (dly.get("sunset") or [None])[0],
+        },
+        "hourly": hourly_forecast,
     }
-    await cache_set("weather", result, 30)
+    await cache_set("weather", result, ttl_minutes=15)
     return result
 
 @app.get("/api/market")
