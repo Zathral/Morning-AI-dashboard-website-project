@@ -2,6 +2,7 @@ import os, json, asyncio, re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 
+import pytz
 import feedparser
 import yfinance as yf
 import httpx
@@ -235,7 +236,7 @@ async def get_weather():
     if cached:
         return cached
 
-    lat, lon = 1.3521, 103.8198  # Singapore
+    lat, lon = 1.3521, 103.8198
     url = (
         "https://api.open-meteo.com/v1/forecast"
         f"?latitude={lat}&longitude={lon}"
@@ -254,21 +255,24 @@ async def get_weather():
     hrly = data.get("hourly", {})
     dly = data.get("daily", {})
 
-    # Get current time
-    now = datetime.now()
+    # CRITICAL FIX: Use Singapore timezone
+    singapore_tz = pytz.timezone('Asia/Singapore')
+    now = datetime.now(singapore_tz)
     
-    # Find the FIRST future hour (not current hour)
+    # Filter for next 8 hours
     hourly_forecast = []
     found_future = False
     
     for i, t in enumerate(hrly.get("time", [])):
+        # Parse the time string and make it timezone-aware
         forecast_time = datetime.fromisoformat(t)
+        if forecast_time.tzinfo is None:
+            forecast_time = singapore_tz.localize(forecast_time)
         
         # Start collecting from the first hour that is in the future
         if not found_future and forecast_time > now:
             found_future = True
         
-        # Once we found future hours, start collecting
         if found_future and len(hourly_forecast) < 8:
             hourly_forecast.append({
                 "time": t,
@@ -277,20 +281,24 @@ async def get_weather():
                 "weather_code": hrly["weather_code"][i],
             })
         
-        # Stop once we have 8 hours
         if len(hourly_forecast) >= 8:
             break
     
-    # If we couldn't find enough future hours (e.g., late at night), 
-    # wrap around to tomorrow's data
-    if len(hourly_forecast) < 8:
-        # Start from beginning of tomorrow's data
+    # Fallback: if still no future hours, take next 8 from current position
+    if len(hourly_forecast) == 0:
+        # Find current hour index and take next 8
+        current_hour = now.hour
+        start_idx = None
         for i, t in enumerate(hrly.get("time", [])):
-            forecast_time = datetime.fromisoformat(t)
-            # Look for first hour of tomorrow
-            if forecast_time.date() > now.date() and len(hourly_forecast) < 8:
+            forecast_hour = datetime.fromisoformat(t).hour
+            if forecast_hour == current_hour:
+                start_idx = i + 1  # Start from next hour
+                break
+        
+        if start_idx is not None:
+            for i in range(start_idx, min(start_idx + 8, len(hrly.get("time", [])))):
                 hourly_forecast.append({
-                    "time": t,
+                    "time": hrly["time"][i],
                     "temp": hrly["temperature_2m"][i],
                     "rain_prob": hrly["precipitation_probability"][i],
                     "weather_code": hrly["weather_code"][i],
