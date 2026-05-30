@@ -531,13 +531,13 @@ async function loadV1() {
   qs('#refresh-btn').classList.add('loading');
 
   // Hard stop: always clear the spinner after 62s regardless of what happens
-  _spinnerTimer = setTimeout(stopSpinner, 62000);
+  _spinnerTimer = setTimeout(stopSpinner, 28000);
 
   // Weather: 15s timeout (Open-Meteo is usually fast)
   const weatherP = fetchWithTimeout('/api/weather', 15000).then(r => r.json());
 
   // Brief: 55s timeout (Gemini + 8 RSS feeds + yfinance can be slow)
-  const briefP = fetchWithTimeout(`/api/brief?name=${encodeURIComponent(name)}`, 55000).then(r => r.json());
+  const briefP = fetchWithTimeout(`/api/brief?name=${encodeURIComponent(name)}`, 25000).then(r => r.json());
 
   weatherP
     .then(d => renderWeather(d))
@@ -561,7 +561,7 @@ async function loadV2() {
   loadHistory();
 }
 
-async function loadAll() { await loadV1(); loadV2(); }
+async function loadAll() { await loadV1(); setTimeout(loadV2, 1500); }
 
 // ── Event listeners ───────────────────────────────────────────────────────
 qs('#refresh-btn').addEventListener('click', loadAll);
