@@ -84,7 +84,7 @@ main{position:relative;z-index:1;max-width:1200px;margin:0 auto;
 
 /* ── News tabs ───────────────────────────────────────────────────────────────── */
 .news-tabs{display:flex;gap:4px;flex-wrap:wrap}
-.news-tab{background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
+.news-tab{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
   color:var(--t2);font-family:var(--font-mono);font-size:.6rem;padding:3px 9px;
   cursor:pointer;transition:all .2s;white-space:nowrap}
 .news-tab.active,.news-tab:hover{border-color:var(--accent);color:var(--accent);background:rgba(79,136,255,.08)}
@@ -151,7 +151,7 @@ main{position:relative;z-index:1;max-width:1200px;margin:0 auto;
 
 /* ── Watchlist ───────────────────────────────────────────────────────────────── */
 .wl-tabs{display:flex;gap:4px;flex-wrap:wrap}
-.wl-tab{background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
+.wl-tab{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
   color:var(--t2);font-family:var(--font-mono);font-size:.62rem;padding:4px 10px;
   cursor:pointer;transition:all .2s}
 .wl-tab.active,.wl-tab:hover{border-color:var(--accent);color:var(--accent);background:rgba(79,136,255,.08)}
@@ -236,7 +236,7 @@ main{position:relative;z-index:1;max-width:1200px;margin:0 auto;
   padding:5px 10px;outline:none;cursor:pointer}
 .hist-select option{background:#0f1525}
 .period-tabs{display:flex;gap:3px}
-.period-tab{background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
+.period-tab{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
   color:var(--t2);font-family:var(--font-mono);font-size:.62rem;padding:4px 10px;cursor:pointer;transition:all .2s}
 .period-tab.active,.period-tab:hover{border-color:var(--accent);color:var(--accent);background:rgba(79,136,255,.08)}
 .hist-chart{width:100%;min-height:180px;margin-bottom:12px}

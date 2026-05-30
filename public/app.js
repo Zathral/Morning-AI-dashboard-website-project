@@ -75,6 +75,15 @@ async function fetchWithTimeout(url, timeoutMs = 55000, options = {}) {
   }
 }
 
+async function fetchJson(url, timeoutMs, options = {}) {
+  const res = await fetchWithTimeout(url, timeoutMs, options);
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Expected JSON, got ${contentType || 'unknown content'}`);
+  }
+  return res.json();
+}
+
 // ── Clock ─────────────────────────────────────────────────────────────────
 function updateClock() {
   const now=new Date();
@@ -216,7 +225,7 @@ async function loadWatchlist() {
 async function refreshWatchlistData() {
   if(!watchlistTickers.length) return;
   try{
-    const r=await fetchWithTimeout(`/api/watchlist-data?tickers=${watchlistTickers.join(',')}`, 20000).then(r=>r.json());
+    const r=await fetchJson(`/api/watchlist-data?tickers=${watchlistTickers.join(',')}`, 20000);
     watchlistData=r.data||{};
     renderWatchlistCards();
     loadStockInsights();
@@ -264,7 +273,7 @@ async function loadStockInsights() {
   const tickers=watchlistTickers.filter(t=>watchlistData[t]?.price!=null).slice(0,8);
   if(!tickers.length) return;
   try{
-    const r=await fetchWithTimeout(`/api/stock-insights?tickers=${tickers.join(',')}`, 25000).then(r=>r.json());
+    const r=await fetchJson(`/api/stock-insights?tickers=${tickers.join(',')}`, 25000);
     stockInsights=r.insights||{};
     renderWatchlistCards();
   } catch(e){}
@@ -348,10 +357,10 @@ function renderSentiment(data) {
 
 async function loadSentiment() {
   try{
-    const data=await fetchWithTimeout('/api/sentiment',30000).then(r=>r.json());
+    const data=await fetchJson('/api/sentiment',30000);
     renderSentiment(data);
   } catch(e){
-    qs('#sentiment-gauge').innerHTML='<div class="error-msg">Sentiment data unavailable.</div>';
+    qs('#sentiment-gauge').innerHTML=`<div class="error-msg">Sentiment unavailable: ${e.message}</div>`;
   }
 }
 
@@ -374,10 +383,10 @@ function renderTrends(data) {
 
 async function loadTrends() {
   try{
-    const data=await fetchWithTimeout('/api/trends',30000).then(r=>r.json());
+    const data=await fetchJson('/api/trends',30000);
     renderTrends(data);
   } catch(e){
-    qs('#trends-grid').innerHTML='<div class="trends-empty">Could not load trends.</div>';
+    qs('#trends-grid').innerHTML=`<div class="trends-empty">Could not load trends: ${e.message}</div>`;
   }
 }
 
@@ -432,7 +441,7 @@ async function loadHistory() {
   qs('#hist-chart').innerHTML='<div class="skel-chart"></div>';
   qs('#hist-stats').style.display='none';
   try{
-    const data=await fetchWithTimeout(`/api/history?symbol=${encodeURIComponent(histSymbol)}&days=${histDays}`,20000).then(r=>r.json());
+    const data=await fetchJson(`/api/history?symbol=${encodeURIComponent(histSymbol)}&days=${histDays}`,20000);
     qs('#hist-chart').innerHTML=buildHistoryChart(data);
     const s=data.stats||{};
     if(s.current!=null){
@@ -488,10 +497,10 @@ async function sendChatMessage(text){
   chatHistory.push({role:'user',content:text});
   showTyping();
   try{
-    const res=await fetchWithTimeout('/api/chat',35000,{
+    const res=await fetchJson('/api/chat',35000,{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({message:text,history:chatHistory.slice(-10)})
-    }).then(r=>r.json());
+    });
     removeTyping();
     appendMessage('assistant',res.response||'No response.',res.sources||[]);
     chatHistory.push({role:'assistant',content:res.response||''});
@@ -534,20 +543,20 @@ async function loadV1() {
   _spinnerTimer = setTimeout(stopSpinner, 28000);
 
   // Weather: 15s timeout (Open-Meteo is usually fast)
-  const weatherP = fetchWithTimeout('/api/weather', 15000).then(r => r.json());
+  const weatherP = fetchJson('/api/weather', 15000);
 
   // Brief: 55s timeout (Gemini + 8 RSS feeds + yfinance can be slow)
-  const briefP = fetchWithTimeout(`/api/brief?name=${encodeURIComponent(name)}`, 25000).then(r => r.json());
+  const briefP = fetchJson(`/api/brief?name=${encodeURIComponent(name)}`, 25000);
 
   weatherP
     .then(d => renderWeather(d))
-    .catch(() => { qs('#weather-main').innerHTML='<div class="error-msg">Weather unavailable.</div>'; });
+    .catch(e => { qs('#weather-main').innerHTML=`<div class="error-msg">Weather unavailable: ${e.message}</div>`; });
 
   briefP
     .then(d => { renderBrief(d); renderNews(d); renderWeatherTip(d.weather_tip); })
-    .catch(() => {
-      qs('#brief-text').innerHTML='<span class="error-msg">Brief timed out or unavailable. Try refreshing in a moment.</span>';
-      qs('#news-list').innerHTML='<li class="error-msg" style="padding:12px 0">Headlines unavailable.</li>';
+    .catch(e => {
+      qs('#brief-text').innerHTML=`<span class="error-msg">Brief unavailable: ${e.message}</span>`;
+      qs('#news-list').innerHTML=`<li class="error-msg" style="padding:12px 0">Headlines unavailable: ${e.message}</li>`;
     });
 
   // Stop spinner once both settle (or the 62s hard stop fires first)
