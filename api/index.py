@@ -407,21 +407,29 @@ async def get_market():
     await cache_set("market_v3", result, ttl=5)
     return result
 
+async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: float = 12.0) -> dict:
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+    try:
+        return await asyncio.wait_for(fetcher(), timeout=timeout)
+    except Exception:
+        return fallback
+
 @app.get("/api/brief")
 async def get_brief(name: str = "Jeremy"):
     cached = await cache_get("brief_v3")
     if cached:
         return cached
 
-    # Fetch articles, weather, market concurrently
-# REPLACE with this (uses only cached values, no redundant calls):
-    articles, market_cached, weather_cached = await asyncio.gather(
+    # Fetch articles, weather, and market concurrently. Cache is preferred, but
+    # cold starts still need live data so the first load does not get stuck with
+    # empty context.
+    articles, market_data, weather_data = await asyncio.gather(
         _fetch_articles(),
-        cache_get("market_v3"),
-        cache_get("weather_v3"),
+        cached_or_fetch("market_v3", get_market, {"market": {}}, timeout=12.0),
+        cached_or_fetch("weather_v3", get_weather, {}, timeout=12.0),
     )
-    market_data  = market_cached  or {"market": {}}
-    weather_data = weather_cached or {}
 
     if not GEMINI_API_KEY:
         result = {
