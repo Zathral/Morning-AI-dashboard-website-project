@@ -123,14 +123,11 @@ for _grp in WATCHLIST_PRESETS.values():
 
 # ── Supabase cache ────────────────────────────────────────────────────────────
 async def cache_get(key: str) -> Optional[dict]:
-    """
-    Read from Supabase cache table.
-    Returns None if: Supabase not configured, table missing, key expired, or any error.
-    """
-    if not supabase:
-        return None
+    if not supabase: return None
     try:
-        r = supabase.table("cache").select("data,expires_at").eq("key", key).single().execute()
+        def _get():
+            return supabase.table("cache").select("data,expires_at").eq("key", key).single().execute()
+        r = await asyncio.wait_for(asyncio.to_thread(_get), timeout=3.0)
         if r.data:
             exp = datetime.fromisoformat(r.data["expires_at"].replace("Z", "+00:00"))
             if exp > datetime.now(timezone.utc):
@@ -140,15 +137,12 @@ async def cache_get(key: str) -> Optional[dict]:
     return None
 
 async def cache_set(key: str, data: dict, ttl: int = 15):
-    """
-    Write to Supabase cache table with TTL in minutes.
-    Silently skips if Supabase is not configured or table is missing.
-    """
-    if not supabase:
-        return
+    if not supabase: return
     try:
         exp = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat() + "Z"
-        supabase.table("cache").upsert({"key": key, "data": data, "expires_at": exp}).execute()
+        def _set():
+            supabase.table("cache").upsert({"key": key, "data": data, "expires_at": exp}).execute()
+        await asyncio.wait_for(asyncio.to_thread(_set), timeout=3.0)
     except Exception:
         pass
 
@@ -420,9 +414,14 @@ async def get_brief(name: str = "Jeremy"):
         return cached
 
     # Fetch articles, weather, market concurrently
-    articles, weather_data, market_data = await asyncio.gather(
-        _fetch_articles(), get_weather(), get_market()
+# REPLACE with this (uses only cached values, no redundant calls):
+    articles, market_cached, weather_cached = await asyncio.gather(
+        _fetch_articles(),
+        cache_get("market_v3"),
+        cache_get("weather_v3"),
     )
+    market_data  = market_cached  or {"market": {}}
+    weather_data = weather_cached or {}
 
     if not GEMINI_API_KEY:
         result = {
