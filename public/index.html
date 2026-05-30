@@ -10,7 +10,6 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
 <div class="bg-grid" aria-hidden="true"></div>
 
 <!-- ── Header ──────────────────────────────────────────────────────────────── -->
@@ -21,22 +20,23 @@
   </div>
   <div class="header-brand"><span class="brand-pip"></span>Morning Brief</div>
   <div class="header-actions">
-    <button id="name-btn" class="btn-ghost" title="Change name">✦ <span id="display-name">—</span></button>
-    <button id="refresh-btn" class="btn-ghost btn-refresh" title="Refresh"><span class="refresh-icon">↻</span></button>
+    <button id="name-btn" class="btn-ghost">✦ <span id="display-name">—</span></button>
+    <button id="refresh-btn" class="btn-ghost btn-refresh"><span class="refresh-icon">↻</span></button>
   </div>
 </header>
 
 <main>
 
   <!-- ── 1 · AI Morning Brief ─────────────────────────────────────────────── -->
-  <section class="brief-section" id="brief-section" aria-label="AI Morning Brief">
+  <section class="brief-section" id="brief-section">
     <div class="brief-glow" aria-hidden="true"></div>
     <div class="brief-inner">
       <div class="brief-label"><span class="brief-pip"></span>AI MORNING BRIEF</div>
       <p class="brief-text" id="brief-text" aria-live="polite">
-        <span class="skel-line" style="width:88%"></span>
+        <span class="skel-line" style="width:90%"></span>
+        <span class="skel-line" style="width:82%"></span>
         <span class="skel-line" style="width:76%"></span>
-        <span class="skel-line" style="width:55%"></span>
+        <span class="skel-line" style="width:60%"></span>
       </p>
       <div class="brief-meta" id="brief-meta">
         <span id="brief-sentiment" class="sentiment-chip" style="display:none"></span>
@@ -48,11 +48,25 @@
 
   <!-- ── 2 · News + Weather ───────────────────────────────────────────────── -->
   <div class="two-col">
-    <section class="card" id="news-section" aria-label="Top Headlines">
+
+    <!-- News -->
+    <section class="card" id="news-section">
       <div class="card-header">
         <h2 class="section-title">Headlines</h2>
-        <span id="news-theme-badge" class="theme-badge" style="display:none"></span>
+        <div class="news-tabs" id="news-tabs">
+          <button class="news-tab active" data-cat="all">All</button>
+          <button class="news-tab" data-cat="world">World</button>
+          <button class="news-tab" data-cat="singapore">Singapore</button>
+          <button class="news-tab" data-cat="finance">Finance</button>
+          <button class="news-tab" data-cat="tech">Tech</button>
+        </div>
       </div>
+      <!-- AI-summarised bullets (always visible) -->
+      <div id="news-bullets" class="news-bullets" style="display:none">
+        <div class="news-bullets-label">KEY POINTS</div>
+        <ul id="bullets-list" class="bullets-list"></ul>
+      </div>
+      <!-- Raw headlines, filterable by tab -->
       <ul id="news-list" class="news-list" aria-live="polite">
         <li class="skel-news"></li><li class="skel-news"></li>
         <li class="skel-news"></li><li class="skel-news"></li>
@@ -61,81 +75,66 @@
       <div id="news-entities" class="entity-row" style="display:none"></div>
     </section>
 
-    <section class="card weather-card" id="weather-section" aria-label="Singapore Weather">
+    <!-- Weather -->
+    <section class="card weather-card" id="weather-section">
       <div class="card-header">
         <h2 class="section-title">Singapore</h2>
         <span class="section-sub">Weather</span>
       </div>
       <div id="weather-main" class="weather-main"><div class="skel-weather"></div></div>
       <div id="weather-hourly" class="weather-hourly"></div>
+      <!-- AI weather tip -->
+      <div id="weather-tip" class="weather-tip" style="display:none">
+        <span class="weather-tip-icon">💡</span>
+        <span id="weather-tip-text"></span>
+      </div>
       <div id="weather-stats" class="weather-stats" style="display:none">
-        <div class="wstat"><span class="wstat-label">Rain Prob.</span><span class="wstat-val" id="wval-rain">—</span></div>
+        <div class="wstat"><span class="wstat-label">Rain</span><span class="wstat-val" id="wval-rain">—</span></div>
         <div class="wstat"><span class="wstat-label">Humidity</span><span class="wstat-val" id="wval-humidity">—</span></div>
         <div class="wstat"><span class="wstat-label">Wind</span><span class="wstat-val" id="wval-wind">—</span></div>
-        <div class="wstat"><span class="wstat-label">Sunrise</span><span class="wstat-val" id="wval-sun">—</span></div>
+        <div class="wstat"><span class="wstat-label">AQI</span><span class="wstat-val" id="wval-aqi">—</span></div>
       </div>
     </section>
   </div>
 
-  <!-- ── 3 · Market Overview ──────────────────────────────────────────────── -->
-  <section class="card market-section" id="market-section" aria-label="Market Overview">
+  <!-- ── 3 · Watchlist (replaces Markets) ─────────────────────────────────── -->
+  <section class="card" id="watchlist-section">
     <div class="card-header">
-      <h2 class="section-title">Markets</h2>
-      <span class="section-sub">Delayed · 15 min</span>
-    </div>
-    <div class="market-grid" id="market-grid" aria-live="polite">
-      <div class="market-card skel-card"></div><div class="market-card skel-card"></div>
-      <div class="market-card skel-card"></div><div class="market-card skel-card"></div>
-      <div class="market-card skel-card"></div><div class="market-card skel-card"></div>
-    </div>
-  </section>
-
-  <!-- ── V2 DIVIDER ───────────────────────────────────────────────────────── -->
-  <div class="v2-divider">
-    <span class="v2-label">✦ V2 FEATURES</span>
-  </div>
-
-  <!-- ── 4 · Smart Watchlist ──────────────────────────────────────────────── -->
-  <section class="card v2-card" id="watchlist-section" aria-label="Smart Watchlist">
-    <div class="card-header">
-      <h2 class="section-title">Watchlist</h2>
+      <h2 class="section-title">Markets &amp; Watchlist</h2>
       <div class="wl-tabs" id="wl-tabs">
         <button class="wl-tab active" data-group="all">All</button>
         <button class="wl-tab" data-group="mag7">Mag 7</button>
         <button class="wl-tab" data-group="sti">STI</button>
         <button class="wl-tab" data-group="crypto">Crypto</button>
+        <button class="wl-tab" data-group="sectors">Sectors</button>
       </div>
     </div>
-
-    <div class="preset-add-row" id="preset-add-row">
+    <div class="preset-add-row">
       <span class="preset-add-label">Quick add:</span>
       <button class="preset-add-btn" data-group="mag7">+ Mag 7</button>
-      <button class="preset-add-btn" data-group="sti">+ STI Blue Chips</button>
+      <button class="preset-add-btn" data-group="sti">+ STI</button>
       <button class="preset-add-btn" data-group="crypto">+ Crypto</button>
+      <button class="preset-add-btn" data-group="sectors">+ Sectors</button>
     </div>
-
     <div class="watchlist-grid" id="watchlist-grid">
       <div class="wl-card skel-card"></div><div class="wl-card skel-card"></div>
       <div class="wl-card skel-card"></div><div class="wl-card skel-card"></div>
       <div class="wl-card skel-card"></div><div class="wl-card skel-card"></div>
     </div>
-
     <div class="wl-add-row">
-      <input id="wl-input" class="wl-input" type="text" placeholder="Add any ticker  e.g. SHOP, 9988.HK" maxlength="12" autocomplete="off" />
+      <input id="wl-input" class="wl-input" type="text" placeholder="Add any ticker  e.g. SHOP, 9988.HK, XLK" maxlength="12" autocomplete="off" />
       <button id="wl-add-btn" class="btn-primary btn-sm">+ Add</button>
     </div>
   </section>
 
-  <!-- ── 5 · Market Sentiment ─────────────────────────────────────────────── -->
-  <section class="card v2-card" id="sentiment-section" aria-label="Market Sentiment">
+  <!-- ── 4 · Market Sentiment ─────────────────────────────────────────────── -->
+  <section class="card" id="sentiment-section">
     <div class="card-header">
       <h2 class="section-title">Market Sentiment</h2>
       <span class="section-sub" id="sentiment-sub">AI Analysis</span>
     </div>
     <div class="sentiment-layout">
-      <div class="gauge-wrap" id="sentiment-gauge">
-        <div class="skel-gauge"></div>
-      </div>
+      <div class="gauge-wrap" id="sentiment-gauge"><div class="skel-gauge"></div></div>
       <div class="sentiment-right">
         <div class="sentiment-categories" id="sentiment-categories"></div>
         <div class="sentiment-entities" id="sentiment-entities"></div>
@@ -143,8 +142,20 @@
     </div>
   </section>
 
+  <!-- ── 5 · Trend Detector ───────────────────────────────────────────────── -->
+  <section class="card" id="trends-section">
+    <div class="card-header">
+      <h2 class="section-title">Trend Detector</h2>
+      <span class="section-sub">Topic frequency in today's headlines</span>
+    </div>
+    <div id="trends-grid" class="trends-grid">
+      <div class="skel-news"></div><div class="skel-news"></div>
+      <div class="skel-news"></div><div class="skel-news"></div>
+    </div>
+  </section>
+
   <!-- ── 6 · Historical Trends ────────────────────────────────────────────── -->
-  <section class="card v2-card" id="history-section" aria-label="Historical Trends">
+  <section class="card" id="history-section">
     <div class="card-header">
       <h2 class="section-title">Historical Trends</h2>
       <div class="hist-controls">
@@ -157,6 +168,8 @@
           <option value="NVDA">NVIDIA</option>
           <option value="MSFT">Microsoft</option>
           <option value="TSLA">Tesla</option>
+          <option value="GC=F">Gold</option>
+          <option value="CL=F">Oil</option>
         </select>
         <div class="period-tabs" id="period-tabs">
           <button class="period-tab active" data-days="7">7D</button>
@@ -169,18 +182,18 @@
     <div id="hist-stats" class="hist-stats" style="display:none"></div>
   </section>
 
-  <!-- ── 7 · AI Chat Assistant ────────────────────────────────────────────── -->
-  <section class="card v2-card chat-section" id="chat-section" aria-label="AI Assistant">
+  <!-- ── 7 · AI Assistant ─────────────────────────────────────────────────── -->
+  <section class="card chat-section" id="chat-section">
     <div class="card-header">
       <h2 class="section-title">AI Assistant</h2>
-      <span class="section-sub">RAG · Gemini 1.5 Flash</span>
+      <span class="section-sub">RAG · Gemini</span>
     </div>
     <div id="chat-messages" class="chat-messages">
       <div class="chat-intro" id="chat-intro">
-        <p class="chat-intro-text">Ask me about today's markets, news, or historical trends.</p>
+        <p class="chat-intro-text">Ask me about today's markets, news, or trends.</p>
         <div class="chat-chips" id="chat-chips">
           <button class="suggest-chip">Summarise today's tech news</button>
-          <button class="suggest-chip">What's driving NVIDIA today?</button>
+          <button class="suggest-chip">What's driving markets today?</button>
           <button class="suggest-chip">How has sentiment trended this week?</button>
           <button class="suggest-chip">Any Singapore market news?</button>
           <button class="suggest-chip">Compare Bitcoin vs S&amp;P this month</button>
@@ -194,30 +207,29 @@
     </div>
   </section>
 
-  <!-- ── 8 · ePortfolio ───────────────────────────────────────────────────── -->
+  <!-- ── 8 · About ─────────────────────────────────────────────────────────── -->
   <section class="card about-section">
     <details>
       <summary class="about-summary">
-        <span class="about-badge">ePortfolio</span>
         <span>About This Project</span>
         <span class="about-chevron">›</span>
       </summary>
       <div class="about-body">
-        <p>Built for an AI &amp; Data Engineering module at Singapore Polytechnic. Demonstrates real-time API integration, AI summarisation, RAG chatbot, and full-stack Python development on Vercel.</p>
+        <p>A personal morning dashboard that pulls together everything that matters before starting the day — live market prices, top news from Singapore and around the world, local weather, and an AI-generated briefing — so I can stay informed without the distraction of social media or news feeds. Built with FastAPI and Gemini on Vercel.</p>
         <div class="tech-pills">
           <span class="pill">FastAPI</span><span class="pill">Python</span>
-          <span class="pill">Gemini 1.5 Flash</span><span class="pill">yfinance</span>
+          <span class="pill">Gemini 2.0 Flash</span><span class="pill">yfinance</span>
           <span class="pill">Open-Meteo</span><span class="pill">Supabase</span>
           <span class="pill">RSS Feeds</span><span class="pill">Vercel</span>
         </div>
         <div class="feature-grid">
           <div class="feat">✦ AI morning brief (Gemini)</div>
-          <div class="feat">✦ News aggregation &amp; NLP sentiment</div>
-          <div class="feat">✦ Live market data + sparklines</div>
-          <div class="feat">✦ Singapore weather (Open-Meteo)</div>
-          <div class="feat">✦ Smart watchlist (presets + custom)</div>
+          <div class="feat">✦ News by category (World/SG/Finance/Tech)</div>
+          <div class="feat">✦ Markets &amp; smart watchlist</div>
+          <div class="feat">✦ Singapore weather + AQI</div>
           <div class="feat">✦ Fear/Greed sentiment gauge</div>
-          <div class="feat">✦ Historical trend charts</div>
+          <div class="feat">✦ Topic frequency trend detector</div>
+          <div class="feat">✦ Historical price + sentiment charts</div>
           <div class="feat">✦ RAG chatbot over 7-day history</div>
         </div>
       </div>
