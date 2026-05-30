@@ -96,8 +96,9 @@ def _chat_sync(model_name: str, system: str, history: list, message: str) -> str
 RSS_FEEDS = [
     {"url": "http://feeds.bbci.co.uk/news/world/rss.xml",            "category": "world"},
     {"url": "https://feeds.reuters.com/reuters/worldNews",           "category": "world"},
-    {"url": "https://www.channelnewsasia.com/rss/8395986",           "category": "singapore"},
-    {"url": "https://www.channelnewsasia.com/rss/8395984",           "category": "singapore"},
+    {"url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416", "category": "singapore"},
+    {"url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=679471", "category": "singapore"},
+    {"url": "https://mothership.sg/feed/",                          "category": "singapore"},
     {"url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "category": "finance"},
     {"url": "https://feeds.reuters.com/reuters/businessNews",        "category": "finance"},
     {"url": "http://feeds.bbci.co.uk/news/business/rss.xml",         "category": "finance"},

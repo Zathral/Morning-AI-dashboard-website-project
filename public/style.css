@@ -231,10 +231,18 @@ main{position:relative;z-index:1;max-width:1200px;margin:0 auto;
 
 /* ── History ─────────────────────────────────────────────────────────────────── */
 .hist-controls{display:flex;align-items:center;gap:10px}
-.hist-select{background:rgba(255,255,255,.04);border:1px solid var(--border-hi);
-  border-radius:var(--r-sm);color:var(--t1);font-family:var(--font-mono);font-size:.7rem;
-  padding:5px 10px;outline:none;cursor:pointer}
-.hist-select option{background:#0f1525}
+.hist-select{appearance:none;-webkit-appearance:none;
+  background:rgba(255,255,255,.035);border:1px solid rgba(106,122,154,.22);
+  border-radius:var(--r-sm);color:var(--t1);font-family:var(--font-sans);font-size:.78rem;
+  font-weight:500;line-height:1.2;padding:7px 32px 7px 12px;outline:none;cursor:pointer;
+  background-image:
+    linear-gradient(45deg,transparent 50%,var(--t2) 50%),
+    linear-gradient(135deg,var(--t2) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+  transition:border-color .2s,background-color .2s,color .2s}
+.hist-select:hover,.hist-select:focus{border-color:rgba(106,122,154,.42);background-color:rgba(255,255,255,.055)}
+.hist-select option{background:#101727;color:var(--t1);font-family:var(--font-sans)}
 .period-tabs{display:flex;gap:3px}
 .period-tab{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm);
   color:var(--t2);font-family:var(--font-mono);font-size:.62rem;padding:4px 10px;cursor:pointer;transition:all .2s}
