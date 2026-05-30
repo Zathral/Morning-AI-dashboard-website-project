@@ -372,137 +372,104 @@ async def get_rag_context() -> str:
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "3.1",
-            "gemini": bool(GEMINI_API_KEY),
-            "supabase": supabase is not None,
-            "supabase_env": bool(SUPABASE_URL and SUPABASE_KEY),
-            "memory_cache_keys": len(_MEM_CACHE),
-            "timestamp": datetime.now(SGT).isoformat()}
+    return {"status":"ok","version":"2.0","gemini":bool(GEMINI_API_KEY),
+            "supabase":supabase is not None,"timestamp":datetime.utcnow().isoformat()}
 
 @app.get("/api/weather")
 async def get_weather():
-    cached = await cache_get("weather_v3")
+    cached = await cache_get("weather")
     if cached:
         return cached
 
     lat, lon = 1.3521, 103.8198
-    wx_url = (
-        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-        "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature"
+    url = (
+        "https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        "&current=temperature_2m,relative_humidity_2m,weather_code,"
+        "wind_speed_10m,apparent_temperature"
         "&hourly=temperature_2m,precipitation_probability,weather_code"
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,"
         "precipitation_probability_max,sunrise,sunset"
-        "&timezone=Asia%2FSingapore&forecast_days=1"
+        "&timezone=Asia%2FSingapore&forecast_days=2"
     )
-    aq_url = (
-        f"https://air-quality-api.open-meteo.com/v1/air-quality"
-        f"?latitude={lat}&longitude={lon}"
-        "&current=pm2_5,us_aqi&timezone=Asia%2FSingapore"
-    )
-
     async with httpx.AsyncClient(timeout=10.0) as client:
-        wx_resp, aq_resp = await asyncio.gather(
-            client.get(wx_url), client.get(aq_url), return_exceptions=True
-        )
+        resp = await client.get(url)
+        data = resp.json()
 
-    data   = wx_resp.json()   if not isinstance(wx_resp,  Exception) else {}
-    aqdata = aq_resp.json()   if not isinstance(aq_resp,  Exception) else {}
+    cur = data.get("current", {})
+    hrly = data.get("hourly", {})
+    dly = data.get("daily", {})
 
-    cur  = data.get("current", {})
-    hrly = data.get("hourly",  {})
-    dly  = data.get("daily",   {})
-
-    # ── FIX: use Singapore local time (UTC+8) when finding the current hour ──
-    # Open-Meteo returns times in SGT (we requested timezone=Asia/Singapore).
-    # datetime.now() on Vercel is UTC; comparing UTC hour to SGT hours was
-    # causing the forecast to start 8 hours in the past.
-    now_sgt = datetime.now(SGT).strftime("%Y-%m-%dT%H:00")
-
-    hourly_fc, started, count = [], False, 0
+    # CRITICAL FIX: Use Singapore timezone
+    singapore_tz = pytz.timezone('Asia/Singapore')
+    now = datetime.now(singapore_tz)
+    
+    # Filter for next 8 hours
+    hourly_forecast = []
+    found_future = False
+    
     for i, t in enumerate(hrly.get("time", [])):
-        if t >= now_sgt:
-            started = True
-        if started and count < 8:
-            hourly_fc.append({
-                "time":         t,
-                "temp":         hrly["temperature_2m"][i],
-                "rain_prob":    hrly["precipitation_probability"][i],
+        # Parse the time string and make it timezone-aware
+        forecast_time = datetime.fromisoformat(t)
+        if forecast_time.tzinfo is None:
+            forecast_time = singapore_tz.localize(forecast_time)
+        
+        # Start collecting from the first hour that is in the future
+        if not found_future and forecast_time > now:
+            found_future = True
+        
+        if found_future and len(hourly_forecast) < 8:
+            hourly_forecast.append({
+                "time": t,
+                "temp": hrly["temperature_2m"][i],
+                "rain_prob": hrly["precipitation_probability"][i],
                 "weather_code": hrly["weather_code"][i],
             })
-            count += 1
-
-    aq_cur    = aqdata.get("current", {})
-    us_aqi    = aq_cur.get("us_aqi")
-    aqi_label = ("Good" if (us_aqi or 0) < 51 else
-                 "Moderate" if (us_aqi or 0) < 101 else
-                 "Unhealthy (Sensitive)" if (us_aqi or 0) < 151 else "Unhealthy")
+        
+        if len(hourly_forecast) >= 8:
+            break
+    
+    # Fallback: if still no future hours, take next 8 from current position
+    if len(hourly_forecast) == 0:
+        # Find current hour index and take next 8
+        current_hour = now.hour
+        start_idx = None
+        for i, t in enumerate(hrly.get("time", [])):
+            forecast_hour = datetime.fromisoformat(t).hour
+            if forecast_hour == current_hour:
+                start_idx = i + 1  # Start from next hour
+                break
+        
+        if start_idx is not None:
+            for i in range(start_idx, min(start_idx + 8, len(hrly.get("time", [])))):
+                hourly_forecast.append({
+                    "time": hrly["time"][i],
+                    "temp": hrly["temperature_2m"][i],
+                    "rain_prob": hrly["precipitation_probability"][i],
+                    "weather_code": hrly["weather_code"][i],
+                })
 
     result = {
         "current": {
-            "temperature":  cur.get("temperature_2m"),
-            "feels_like":   cur.get("apparent_temperature"),
-            "humidity":     cur.get("relative_humidity_2m"),
+            "temperature": cur.get("temperature_2m"),
+            "feels_like": cur.get("apparent_temperature"),
+            "humidity": cur.get("relative_humidity_2m"),
             "weather_code": cur.get("weather_code"),
-            "wind_speed":   cur.get("wind_speed_10m"),
+            "wind_speed": cur.get("wind_speed_10m"),
         },
         "daily": {
-            "max_temp":  (dly.get("temperature_2m_max")              or [None])[0],
-            "min_temp":  (dly.get("temperature_2m_min")              or [None])[0],
-            "rain_prob": (dly.get("precipitation_probability_max")   or [None])[0],
-            "sunrise":   (dly.get("sunrise")                         or [None])[0],
-            "sunset":    (dly.get("sunset")                          or [None])[0],
+            "max_temp": (dly.get("temperature_2m_max") or [None])[0],
+            "min_temp": (dly.get("temperature_2m_min") or [None])[0],
+            "rain_prob": (dly.get("precipitation_probability_max") or [None])[0],
+            "sunrise": (dly.get("sunrise") or [None])[0],
+            "sunset": (dly.get("sunset") or [None])[0],
         },
-        "hourly": hourly_fc,
-        "air_quality": {
-            "pm2_5": round(aq_cur["pm2_5"], 1) if aq_cur.get("pm2_5") else None,
-            "us_aqi": us_aqi,
-            "label":  aqi_label,
-        },
+        "hourly": hourly_forecast,
     }
-    await cache_set("weather_v3", result, ttl=30)
+    await cache_set("weather", result, ttl_minutes=15)
+    # Add this right before 'return result'
+    print(f"DEBUG: Returning {len(hourly_forecast)} hours, first hour: {hourly_forecast[0]['time'] if hourly_forecast else 'none'}")
     return result
-
-@app.get("/api/watchlist-data")
-async def get_watchlist_data(tickers: str = ",".join(DEFAULT_WATCHLIST)):
-    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()][:28]
-    cache_key   = "wl3_" + "_".join(sorted(ticker_list))[:90]
-    cached      = await cache_get(cache_key)
-    if cached:
-        return cached
-    results = await asyncio.gather(*[_fetch_ticker(s) for s in ticker_list], return_exceptions=True)
-    data = {sym: (res if not isinstance(res, Exception)
-                  else {"name": _NAME_MAP.get(sym,sym), "price": None,
-                        "change_pct": 0, "sparkline": [], "up": True})
-            for sym, res in zip(ticker_list, results)}
-    result = {"data": data}
-    await cache_set(cache_key, result, ttl=3)
-    return result
-
-@app.get("/api/watchlist/{session_key}")
-async def load_watchlist(session_key: str):
-    if not supabase:
-        return {"tickers": DEFAULT_WATCHLIST}
-    try:
-        r = supabase.table("watchlist").select("tickers") \
-              .eq("session_key", session_key).single().execute()
-        if r.data:
-            return {"tickers": r.data["tickers"]}
-    except Exception:
-        pass
-    return {"tickers": DEFAULT_WATCHLIST}
-
-@app.put("/api/watchlist/{session_key}")
-async def save_watchlist(session_key: str, body: WatchlistUpdate):
-    if supabase:
-        try:
-            supabase.table("watchlist").upsert({
-                "session_key": session_key,
-                "tickers":     body.tickers,
-                "updated_at":  datetime.utcnow().isoformat() + "Z",
-            }).execute()
-        except Exception:
-            pass
-    return {"ok": True}
 
 @app.get("/api/market")
 async def get_market():
