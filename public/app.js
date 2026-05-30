@@ -305,7 +305,7 @@ async function addPresetGroup(group) {
 // ── Sentiment gauge (sweep=1 = top-half arc) ──────────────────────────────
 function buildGaugeSVG(score) {
   score=Math.max(0,Math.min(100,score));
-  const cx=110, cy=88, r=72, sw=14, W=220, H=122;
+  const cx=120, cy=92, r=76, sw=14, W=240, H=132;
   const colors=['#ff4f6d','#ff8c42','#ffb830','#7bc67e','#00e5a0'];
   const labels=['Extreme Fear','Fear','Neutral','Greed','Extreme Greed'];
   // pt(): standard-math angle → SVG coords (y flipped)
@@ -316,7 +316,7 @@ function buildGaugeSVG(score) {
   // IMPORTANT: sweep=1 draws the TOP semicircle in SVG.
   // sweep=0 draws the bottom half which gets clipped by the viewBox (the v2 bug).
   let svg=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-  svg+=`<defs><filter id="sg"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+  svg+=`<defs><filter id="sg" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
   svg+=`<path d="M${s0.x},${s0.y} A${r},${r} 0 0,1 ${e0.x},${e0.y}" stroke="rgba(255,255,255,0.07)" stroke-width="${sw+2}" fill="none" stroke-linecap="round"/>`;
   for(let i=0;i<5;i++){
     const sp=pt(angles[i]),ep=pt(angles[i+1]);

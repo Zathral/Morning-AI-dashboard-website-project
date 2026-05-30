@@ -1,6 +1,8 @@
 import os, json, asyncio, re
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
+from urllib.parse import quote
 
 import feedparser
 import yfinance as yf
@@ -39,6 +41,8 @@ if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
         pass
+
+_MEM_CACHE = {}
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class WatchlistUpdate(BaseModel):
@@ -123,7 +127,11 @@ for _grp in WATCHLIST_PRESETS.values():
 
 # ── Supabase cache ────────────────────────────────────────────────────────────
 async def cache_get(key: str) -> Optional[dict]:
-    if not supabase: return None
+    mem = _MEM_CACHE.get(key)
+    if mem and mem["expires_at"] > datetime.now(timezone.utc):
+        return mem["data"]
+    if not supabase:
+        return None
     try:
         def _get():
             return supabase.table("cache").select("data,expires_at").eq("key", key).single().execute()
@@ -137,9 +145,12 @@ async def cache_get(key: str) -> Optional[dict]:
     return None
 
 async def cache_set(key: str, data: dict, ttl: int = 15):
-    if not supabase: return
+    exp_dt = datetime.now(timezone.utc) + timedelta(minutes=ttl)
+    _MEM_CACHE[key] = {"data": data, "expires_at": exp_dt}
+    if not supabase:
+        return
     try:
-        exp = (datetime.utcnow() + timedelta(minutes=ttl)).isoformat() + "Z"
+        exp = exp_dt.isoformat().replace("+00:00", "Z")
         def _set():
             supabase.table("cache").upsert({"key": key, "data": data, "expires_at": exp}).execute()
         await asyncio.wait_for(asyncio.to_thread(_set), timeout=3.0)
@@ -153,6 +164,66 @@ def score_to_label(s: int) -> str:
     if s < 60: return "Neutral"
     if s < 80: return "Greed"
     return "Extreme Greed"
+
+def score_to_sentiment(s: int) -> str:
+    if s >= 65: return "bullish"
+    if s <= 35: return "bearish"
+    if s < 50: return "cautious"
+    return "neutral"
+
+def _category_for_text(text: str) -> str:
+    t = text.lower()
+    if any(k in t for k in ["singapore", "sgx", "mas", "dbs", "ocbc", "uob", "temasek"]):
+        return "singapore"
+    if any(k in t for k in ["stock", "market", "shares", "fed", "rate", "oil", "gold", "earnings", "bank"]):
+        return "finance"
+    if any(k in t for k in ["ai", "chip", "semiconductor", "software", "tech", "cyber"]):
+        return "tech"
+    if any(k in t for k in ["war", "election", "tariff", "china", "russia", "ukraine", "israel", "gaza"]):
+        return "geopolitics"
+    if any(k in t for k in ["oil", "gold", "copper", "gas", "commodity"]):
+        return "commodities"
+    return "other"
+
+def _headline_entities(articles: list, limit: int = 8) -> list:
+    skip = {"The","A","An","And","Or","But","For","With","From","After","Before","This",
+            "That","New","News","World","Singapore","Asia","US","UK"}
+    counts = Counter()
+    for a in articles:
+        title = a.get("title", "")
+        for token in re.findall(r"\b[A-Z][A-Za-z&.-]{2,}\b|\b[A-Z]{2,}\b", title):
+            if token not in skip:
+                counts[token] += 1
+    return [{"name": name, "sentiment": "neutral", "count": count}
+            for name, count in counts.most_common(limit)]
+
+def _local_trends(articles: list) -> list:
+    stop = {"the","and","for","with","from","after","before","over","into","their","about",
+            "this","that","says","will","are","has","have","new","more","amid"}
+    counts = Counter()
+    cat_counts = {}
+    for a in articles:
+        title = a.get("title", "")
+        words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z-]{3,}", title)]
+        seen = set(w for w in words if w not in stop)
+        cat = _category_for_text(title)
+        for w in seen:
+            counts[w] += 1
+            cat_counts.setdefault(w, Counter())[cat] += 1
+    total = max(len(articles), 1)
+    topics = []
+    for word, count in counts.most_common(8):
+        if count < 2:
+            continue
+        category = cat_counts[word].most_common(1)[0][0]
+        topics.append({
+            "topic": word.title(),
+            "count": count,
+            "pct": round(count / total * 100),
+            "category": category,
+            "sentiment": "neutral",
+        })
+    return topics
 
 async def _fetch_articles() -> list:
     """
@@ -186,7 +257,28 @@ async def _fetch_articles() -> list:
     return [item for batch in results for item in batch]
 
 async def _fetch_ticker(symbol: str) -> dict:
-    """Fetch single ticker with 9s timeout."""
+    """Fetch single ticker with Yahoo chart API first, then yfinance fallback."""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
+        params = {"range": "5d", "interval": "1d"}
+        headers = {"User-Agent": "Mozilla/5.0 MorningBrief/3.1"}
+        async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+        chart = (resp.json().get("chart", {}).get("result") or [None])[0] or {}
+        meta = chart.get("meta", {})
+        closes = [c for c in ((chart.get("indicators", {}).get("quote") or [{}])[0].get("close") or []) if c is not None]
+        price = meta.get("regularMarketPrice") or (closes[-1] if closes else None)
+        prev = meta.get("previousClose") or (closes[-2] if len(closes) >= 2 else None)
+        if price is not None:
+            chg = ((price - prev) / prev * 100) if prev else 0
+            return {"name": _NAME_MAP.get(symbol, symbol), "price": round(float(price), 2),
+                    "change_pct": round(float(chg), 2),
+                    "sparkline": [round(float(v), 2) for v in closes[-5:]],
+                    "up": chg >= 0}
+    except Exception:
+        pass
+
     try:
         hist = await asyncio.wait_for(
             asyncio.to_thread(yf.Ticker(symbol).history, period="5d", interval="1d"),
@@ -208,22 +300,40 @@ async def _fetch_ticker(symbol: str) -> dict:
     return {"name": _NAME_MAP.get(symbol, symbol), "price": None,
             "change_pct": 0, "sparkline": [], "up": True}
 
+async def _fetch_history_prices(symbol: str, period: str) -> list:
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
+    params = {"range": period, "interval": "1d"}
+    headers = {"User-Agent": "Mozilla/5.0 MorningBrief/3.1"}
+    async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+        resp = await client.get(url, params=params)
+        resp.raise_for_status()
+    chart = (resp.json().get("chart", {}).get("result") or [None])[0] or {}
+    timestamps = chart.get("timestamp") or []
+    closes = (chart.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
+    prices = []
+    for ts, close in zip(timestamps, closes):
+        if close is None:
+            continue
+        d = datetime.fromtimestamp(ts, timezone.utc).astimezone(SGT).date().isoformat()
+        prices.append({"date": d, "price": round(float(close), 2)})
+    return prices
+
 async def save_daily_snapshot(market_data: dict, score: int, sentiment: str,
                                top_theme: str, key_entities: list, bullets: list):
     if not supabase:
         return
     today = datetime.now(SGT).date().isoformat()
     try:
-        existing = supabase.table("sentiment_history").select("snapshot_date") \
-                       .eq("snapshot_date", today).execute()
-        if existing.data:
-            return
         for name, md in market_data.get("market", {}).items():
             if md.get("price"):
                 supabase.table("market_history").upsert({
                     "snapshot_date": today, "symbol": md["symbol"],
                     "name": name, "price": md["price"], "change_pct": md["change_pct"],
                 }).execute()
+        existing = supabase.table("sentiment_history").select("snapshot_date") \
+                       .eq("snapshot_date", today).execute()
+        if existing.data:
+            return
         supabase.table("sentiment_history").upsert({
             "snapshot_date": today, "score": score, "label": score_to_label(score),
             "sentiment": sentiment, "top_theme": top_theme,
@@ -262,7 +372,10 @@ async def get_rag_context() -> str:
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "3.1",
-            "gemini": bool(GEMINI_API_KEY), "supabase": supabase is not None,
+            "gemini": bool(GEMINI_API_KEY),
+            "supabase": supabase is not None,
+            "supabase_env": bool(SUPABASE_URL and SUPABASE_KEY),
+            "memory_cache_keys": len(_MEM_CACHE),
             "timestamp": datetime.now(SGT).isoformat()}
 
 @app.get("/api/weather")
@@ -515,10 +628,11 @@ HEADLINES:\n{hl_text}"""
             "top_theme":    parsed.get("top_theme", ""),
             "key_entities": parsed.get("key_entities", []),
         },
+        "market":    market_data.get("market", {}),
         "articles":  articles[:16],
         "timestamp": datetime.now(SGT).isoformat(),
     }
-    await cache_set("brief_v3", result, ttl=30)
+    await cache_set("brief_v3", result, ttl=60)
 
     # Save daily snapshot (uses SGT date)
     sent_map = {"bullish": 70, "bearish": 25, "cautious": 35, "neutral": 50}
@@ -537,44 +651,24 @@ async def get_sentiment():
 
     articles, market_data = await asyncio.gather(_fetch_articles(), get_market())
     mkt = market_data.get("market", {})
-    up_ct  = sum(1 for md in mkt.values() if md.get("up"))
-    mkt_str = " | ".join(f"{n}: {'▲' if md.get('up') else '▼'}{abs(md.get('change_pct',0))}%"
-                          for n, md in mkt.items() if md.get("price"))
-    base = int((up_ct / max(len(mkt), 1)) * 100)
-
-    if not GEMINI_API_KEY:
-        result = {"score": base, "label": score_to_label(base), "categories": {}, "entities": []}
-        await cache_set("sentiment_v3", result, ttl=30)
-        return result
-
-    headlines = "\n".join(f"- [{a['category'].upper()}] {a['title']}" for a in articles[:18])
-    prompt = f"""Analyse market sentiment. Return ONLY valid JSON, no markdown:
-{{
-  "categories": {{
-    "tech":        {{"score":<0-100>,"sentiment":"bullish|bearish|neutral"}},
-    "healthcare":  {{"score":<0-100>,"sentiment":"bullish|bearish|neutral"}},
-    "finance":     {{"score":<0-100>,"sentiment":"bullish|bearish|neutral"}},
-    "commodities": {{"score":<0-100>,"sentiment":"bullish|bearish|neutral"}}
-  }},
-  "entities": [{{"name":"...","sentiment":"positive|negative|neutral","count":<int>}}]
-}}
-Score 0=extreme fear, 50=neutral, 100=extreme greed. Entities: top 8.
-MARKETS: {mkt_str}
-HEADLINES:\n{headlines}"""
-
-    try:
-        text   = await _generate(prompt, timeout=25.0)
-        text   = re.sub(r"^```[a-z]*\n?","",text).rstrip("```").strip()
-        parsed = json.loads(text)
-        cats   = parsed.get("categories", {})
-        scores = [v.get("score", 50) for v in cats.values() if isinstance(v, dict)]
-        score  = int(sum(scores) / len(scores)) if scores else base
-        result = {"score": score, "label": score_to_label(score),
-                  "categories": cats, "entities": parsed.get("entities", [])}
-    except Exception:
-        result = {"score": base, "label": score_to_label(base), "categories": {}, "entities": []}
-
-    await cache_set("sentiment_v3", result, ttl=30)
+    priced = [md for md in mkt.values() if md.get("price") is not None]
+    avg_change = sum(md.get("change_pct", 0) for md in priced) / max(len(priced), 1)
+    up_ratio = sum(1 for md in priced if md.get("up")) / max(len(priced), 1)
+    score = max(0, min(100, int(50 + avg_change * 7 + (up_ratio - 0.5) * 35)))
+    sector_map = {
+        "tech": ["NASDAQ"],
+        "healthcare": [],
+        "finance": ["S&P 500", "STI"],
+        "commodities": ["Gold", "Oil", "Bitcoin"],
+    }
+    cats = {}
+    for cat, names in sector_map.items():
+        vals = [mkt[n].get("change_pct", 0) for n in names if n in mkt and mkt[n].get("price") is not None]
+        sc = max(0, min(100, int(50 + (sum(vals) / len(vals)) * 8))) if vals else 50
+        cats[cat] = {"score": sc, "sentiment": score_to_sentiment(sc)}
+    result = {"score": score, "label": score_to_label(score),
+              "categories": cats, "entities": _headline_entities(articles)}
+    await cache_set("sentiment_v3", result, ttl=60)
     return result
 
 @app.get("/api/trends")
@@ -584,28 +678,8 @@ async def get_trends():
         return cached
 
     articles = await _fetch_articles()
-    if not GEMINI_API_KEY or not articles:
-        return {"topics": [], "timestamp": datetime.now(SGT).isoformat()}
-
-    headlines = "\n".join(f"- {a['title']}" for a in articles[:30])
-    prompt = f"""Analyse these news headlines for recurring topics. Return ONLY valid JSON:
-{{
-  "topics": [
-    {{"topic":"...","count":<headlines mentioning this>,"pct":<% of {len(articles)} total>,"category":"finance|tech|geopolitics|singapore|commodities|other","sentiment":"positive|negative|neutral"}}
-  ]
-}}
-List top 8 topics that appear in at least 2 headlines.
-HEADLINES:\n{headlines}"""
-
-    try:
-        text   = await _generate(prompt, timeout=20.0)
-        text   = re.sub(r"^```[a-z]*\n?","",text).rstrip("```").strip()
-        parsed = json.loads(text)
-        result = {"topics": parsed.get("topics", []), "timestamp": datetime.now(SGT).isoformat()}
-    except Exception:
-        result = {"topics": [], "timestamp": datetime.now(SGT).isoformat()}
-
-    await cache_set("trends_v3", result, ttl=30)
+    result = {"topics": _local_trends(articles), "timestamp": datetime.now(SGT).isoformat()}
+    await cache_set("trends_v3", result, ttl=60)
     return result
 
 @app.get("/api/history")
@@ -620,15 +694,17 @@ async def get_history(symbol: str = "^GSPC", days: int = 30):
     period = next((v for k, v in period_map.items() if days <= k), "1y")
 
     try:
-        hist = await asyncio.wait_for(
-            asyncio.to_thread(yf.Ticker(symbol).history, period=period, interval="1d"),
-            timeout=15.0
-        )
-        if hist.empty:
-            return {"symbol": symbol, "prices": [], "sentiment": [], "stats": {},
-                    "error": "No data — Yahoo Finance may be temporarily unavailable."}
-        prices = [{"date": idx.strftime("%Y-%m-%d"), "price": round(float(row["Close"]), 2)}
-                  for idx, row in hist.iterrows()]
+        prices = await asyncio.wait_for(_fetch_history_prices(symbol, period), timeout=12.0)
+        if not prices:
+            hist = await asyncio.wait_for(
+                asyncio.to_thread(yf.Ticker(symbol).history, period=period, interval="1d"),
+                timeout=12.0
+            )
+            if hist.empty:
+                return {"symbol": symbol, "prices": [], "sentiment": [], "stats": {},
+                        "error": "No data - Yahoo Finance may be temporarily unavailable."}
+            prices = [{"date": idx.strftime("%Y-%m-%d"), "price": round(float(row["Close"]), 2)}
+                      for idx, row in hist.iterrows()]
     except asyncio.TimeoutError:
         return {"symbol": symbol, "prices": [], "sentiment": [], "stats": {},
                 "error": "Request timed out fetching price data."}
@@ -668,25 +744,8 @@ async def get_stock_insights(tickers: str = "AAPL,NVDA,TSLA"):
     cached      = await cache_get(cache_key)
     if cached:
         return cached
-    if not GEMINI_API_KEY:
-        return {"insights": {t: "" for t in ticker_list}}
-
-    brief_cache = await cache_get("brief_v3")
-    hl = "\n".join(a.get("title","") for a in (brief_cache or {}).get("articles",[])[:20])
-
-    prompt = f"""For each stock, one sentence on what's relevant in today's news (or blank string if nothing).
-Return ONLY valid JSON: {{"insights":{{{", ".join(f'"{t}":"..."' for t in ticker_list)}}}}}
-TODAY'S HEADLINES:\n{hl}"""
-
-    try:
-        text   = await _generate(prompt, timeout=20.0)
-        text   = re.sub(r"^```[a-z]*\n?","",text).rstrip("```").strip()
-        parsed = json.loads(text)
-        result = {"insights": parsed.get("insights", {})}
-    except Exception:
-        result = {"insights": {t: "" for t in ticker_list}}
-
-    await cache_set(cache_key, result, ttl=30)
+    result = {"insights": {t: "" for t in ticker_list}}
+    await cache_set(cache_key, result, ttl=60)
     return result
 
 @app.get("/api/presets")
@@ -743,7 +802,11 @@ async def chat(req: ChatRequest):
             timeout=28.0
         )
     except Exception as e:
-        answer = f"Sorry, I ran into an issue: {str(e)[:120]}"
+        msg = str(e)
+        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+            answer = "Gemini is rate-limited right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
+        else:
+            answer = f"Sorry, I ran into an issue: {msg[:120]}"
 
     return {"response": answer, "sources": sources}
 
