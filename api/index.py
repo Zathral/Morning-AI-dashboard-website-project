@@ -199,31 +199,52 @@ def _headline_entities(articles: list, limit: int = 8) -> list:
             for name, count in counts.most_common(limit)]
 
 def _local_trends(articles: list) -> list:
-    stop = {"the","and","for","with","from","after","before","over","into","their","about",
-            "this","that","says","will","are","has","have","new","more","amid"}
-    counts = Counter()
-    cat_counts = {}
+    """Extract trending named entities from headlines using capitalisation patterns."""
+    # Multi-word proper nouns: "Federal Reserve", "Elon Musk", "Hong Kong"
+    multi_proper = re.compile(r'\b([A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,})+)\b')
+    # Acronyms: AI, NVIDIA, NATO, OPEC — at least 2 caps
+    acronym_pat  = re.compile(r'\b([A-Z]{2,})\b')
+
+    skip_phrases  = {"The", "In", "On", "At", "By", "Of", "No"}
+    skip_acronyms = {"US", "UK", "EU", "UN", "AM", "PM", "GMT", "CEO", "GDP",
+                     "IMF", "WHO", "WTO", "IPO", "ETF", "NFT", "PDF", "RSS",
+                     "CNN", "BBC", "NBC", "ABC", "CBS"}
+
+    counts    = Counter()
+    cat_count = {}
+
     for a in articles:
         title = a.get("title", "")
-        words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z-]{3,}", title)]
-        seen = set(w for w in words if w not in stop)
-        cat = _category_for_text(title)
-        for w in seen:
-            counts[w] += 1
-            cat_counts.setdefault(w, Counter())[cat] += 1
-    total = max(len(articles), 1)
+        cat   = a.get("category", "other")
+        seen  = set()
+
+        for phrase in multi_proper.findall(title):
+            if phrase not in skip_phrases and phrase not in seen:
+                seen.add(phrase)
+                counts[phrase] += 1
+                cat_count.setdefault(phrase, Counter())[cat] += 1
+
+        for acr in acronym_pat.findall(title):
+            if acr not in skip_acronyms and acr not in seen:
+                seen.add(acr)
+                counts[acr] += 1
+                cat_count.setdefault(acr, Counter())[cat] += 1
+
+    total  = max(len(articles), 1)
     topics = []
-    for word, count in counts.most_common(8):
+    for topic, count in counts.most_common(20):
         if count < 2:
             continue
-        category = cat_counts[word].most_common(1)[0][0]
+        category = cat_count[topic].most_common(1)[0][0]
         topics.append({
-            "topic": word.title(),
-            "count": count,
-            "pct": round(count / total * 100),
+            "topic":    topic,
+            "count":    count,
+            "pct":      round(count / total * 100),
             "category": category,
             "sentiment": "neutral",
         })
+        if len(topics) == 8:
+            break
     return topics
 
 async def _fetch_articles() -> list:
@@ -261,7 +282,7 @@ async def _fetch_ticker(symbol: str) -> dict:
     """Fetch single ticker with Yahoo chart API first, then yfinance fallback."""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
-        params = {"range": "5d", "interval": "1d"}
+        params = {"range": "1mo", "interval": "1d"}
         headers = {"User-Agent": "Mozilla/5.0 MorningBrief/3.1"}
         async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
             resp = await client.get(url, params=params)
@@ -275,14 +296,14 @@ async def _fetch_ticker(symbol: str) -> dict:
             chg = ((price - prev) / prev * 100) if prev else 0
             return {"name": _NAME_MAP.get(symbol, symbol), "price": round(float(price), 2),
                     "change_pct": round(float(chg), 2),
-                    "sparkline": [round(float(v), 2) for v in closes[-5:]],
+                    "sparkline": [round(float(v), 2) for v in closes],
                     "up": chg >= 0}
     except Exception:
         pass
 
     try:
         hist = await asyncio.wait_for(
-            asyncio.to_thread(yf.Ticker(symbol).history, period="5d", interval="1d"),
+            asyncio.to_thread(yf.Ticker(symbol).history, period="1mo", interval="1d"),
             timeout=9.0
         )
         if len(hist) >= 2:
@@ -557,7 +578,7 @@ async def get_brief(name: str = "Jeremy"):
 
     # Build context strings
     headlines_by_cat: dict = {"world":[], "singapore":[], "finance":[], "tech":[]}
-    for a in articles[:20]:
+    for a in articles:
         cat = a["category"]
         if cat in headlines_by_cat and len(headlines_by_cat[cat]) < 5:
             headlines_by_cat[cat].append(a["title"])
@@ -630,7 +651,7 @@ HEADLINES:\n{hl_text}"""
             "key_entities": parsed.get("key_entities", []),
         },
         "market":    market_data.get("market", {}),
-        "articles":  articles[:16],
+        "articles":  articles,
         "timestamp": datetime.now(SGT).isoformat(),
     }
     await cache_set("brief_v3", result, ttl=60)
