@@ -215,31 +215,52 @@ def _headline_entities(articles: list, limit: int = 8) -> list:
             for name, count in counts.most_common(limit)]
 
 def _local_trends(articles: list) -> list:
-    stop = {"the","and","for","with","from","after","before","over","into","their","about",
-            "this","that","says","will","are","has","have","new","more","amid"}
-    counts = Counter()
-    cat_counts = {}
+    """Extract trending named entities from headlines using capitalisation patterns."""
+    # Multi-word proper nouns: "Federal Reserve", "Elon Musk", "Hong Kong"
+    multi_proper = re.compile(r'\b([A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,})+)\b')
+    # Acronyms: AI, NVIDIA, NATO, OPEC — at least 2 caps
+    acronym_pat  = re.compile(r'\b([A-Z]{2,})\b')
+
+    skip_phrases  = {"The", "In", "On", "At", "By", "Of", "No"}
+    skip_acronyms = {"US", "UK", "EU", "UN", "AM", "PM", "GMT", "CEO", "GDP",
+                     "IMF", "WHO", "WTO", "IPO", "ETF", "NFT", "PDF", "RSS",
+                     "CNN", "BBC", "NBC", "ABC", "CBS"}
+
+    counts    = Counter()
+    cat_count = {}
+
     for a in articles:
         title = a.get("title", "")
-        words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z-]{3,}", title)]
-        seen = set(w for w in words if w not in stop)
-        cat = _category_for_text(title)
-        for w in seen:
-            counts[w] += 1
-            cat_counts.setdefault(w, Counter())[cat] += 1
-    total = max(len(articles), 1)
+        cat   = a.get("category", "other")
+        seen  = set()
+
+        for phrase in multi_proper.findall(title):
+            if phrase not in skip_phrases and phrase not in seen:
+                seen.add(phrase)
+                counts[phrase] += 1
+                cat_count.setdefault(phrase, Counter())[cat] += 1
+
+        for acr in acronym_pat.findall(title):
+            if acr not in skip_acronyms and acr not in seen:
+                seen.add(acr)
+                counts[acr] += 1
+                cat_count.setdefault(acr, Counter())[cat] += 1
+
+    total  = max(len(articles), 1)
     topics = []
-    for word, count in counts.most_common(8):
+    for topic, count in counts.most_common(20):
         if count < 2:
             continue
-        category = cat_counts[word].most_common(1)[0][0]
+        category = cat_count[topic].most_common(1)[0][0]
         topics.append({
-            "topic": word.title(),
-            "count": count,
-            "pct": round(count / total * 100),
+            "topic":    topic,
+            "count":    count,
+            "pct":      round(count / total * 100),
             "category": category,
             "sentiment": "neutral",
         })
+        if len(topics) == 8:
+            break
     return topics
 
 async def _fetch_articles() -> list:
