@@ -312,7 +312,7 @@ async def _fetch_ticker(symbol: str) -> dict:
             chg = ((price - prev) / prev * 100) if prev else 0
             return {"name": _NAME_MAP.get(symbol, symbol), "price": round(float(price), 2),
                     "change_pct": round(float(chg), 2),
-                    "sparkline": [round(float(v), 2) for v in closes],
+                    "sparkline": [round(float(v), 2) for v in closes[-22:]],
                     "up": chg >= 0}
     except Exception:
         pass
@@ -633,7 +633,8 @@ Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
   "bullets": {{
     "world":     ["3 crisp bullets on top world news with specific names and details"],
     "singapore": ["3 crisp bullets on Singapore-specific news"],
-    "finance":   ["3 crisp bullets on market-moving company or sector news with numbers"]
+    "finance":   ["3 crisp bullets on market-moving company or sector news with numbers"],
+    "tech":      ["2 crisp bullets on major tech or AI news today"]
   }},
   "sentiment":    "bullish|bearish|neutral|cautious",
   "top_theme":    "Dominant theme across all news in 6-9 words",
@@ -671,6 +672,7 @@ HEADLINES:\n{hl_text}"""
             "world":     [a["title"] for a in articles if a["category"] == "world"][:3],
             "singapore": [a["title"] for a in articles if a["category"] == "singapore"][:3],
             "finance":   [a["title"] for a in articles if a["category"] == "finance"][:3],
+            "tech":      [a["title"] for a in articles if a["category"] == "tech"][:2],
         }
         parsed = {
             "brief":        f"Good {greeting}, {name}. {mkt_lines[0]+'.' if mkt_lines else 'Markets are active.'}",
@@ -691,7 +693,7 @@ HEADLINES:\n{hl_text}"""
             "key_entities": parsed.get("key_entities", []),
         },
         "market":    market_data.get("market", {}),
-        "articles":  articles[:16],
+        "articles":  articles,
         "timestamp": datetime.now(SGT).isoformat(),
     }
     await cache_set(cache_key, result, ttl=720)
