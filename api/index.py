@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from urllib.parse import quote
 
+import time
 import feedparser
 import yfinance as yf
 import httpx
@@ -67,10 +68,25 @@ def _generate_sync(prompt: str, model_name: str = None) -> str:
     name = model_name or _get_model_name()
     for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
         try:
-            return genai.GenerativeModel(attempt_name).generate_content(prompt).text
+            model = genai.GenerativeModel(attempt_name)
+
+            for retry in range(3):
+                try:
+                    return model.generate_content(prompt).text
+                except Exception as e:
+                    if "429" in str(e):
+                        time.sleep(2 ** retry)
+                        continue
+                    raise
         except Exception as e:
-            if "not found" in str(e).lower() or "404" in str(e):
+            msg = str(e).lower()
+
+            if "429" in msg:
+                raise RuntimeError("RATE_LIMIT")
+
+            if "not found" in msg or "404" in msg:
                 continue
+
             raise
     raise RuntimeError("All Gemini models failed")
 
@@ -532,7 +548,14 @@ async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: floa
 
 @app.get("/api/brief")
 async def get_brief(name: str = "Jeremy"):
-    cached = await cache_get("brief_v3")
+
+    today = datetime.now(SGT).strftime("%Y-%m-%d")
+    cache_key = f"brief_{today}"
+
+    today = datetime.now(SGT).strftime("%Y-%m-%d")
+    print(f"Generating brief for {today}")
+
+    cached = await cache_get(cache_key)
     if cached:
         return cached
 
@@ -557,9 +580,9 @@ async def get_brief(name: str = "Jeremy"):
 
     # Build context strings
     headlines_by_cat: dict = {"world":[], "singapore":[], "finance":[], "tech":[]}
-    for a in articles[:20]:
+    for a in articles:
         cat = a["category"]
-        if cat in headlines_by_cat and len(headlines_by_cat[cat]) < 5:
+        if cat in headlines_by_cat and len(headlines_by_cat[cat]) < 3:
             headlines_by_cat[cat].append(a["title"])
     hl_text = "\n".join(f"[{cat.upper()}] {t}"
                          for cat, titles in headlines_by_cat.items() for t in titles)
@@ -601,10 +624,27 @@ WEATHER: {wx_text}
 HEADLINES:\n{hl_text}"""
 
     try:
-        # Run Gemini in a thread pool with a 30s timeout so it never blocks the event loop
-        text   = await _generate(prompt, timeout=30.0)
-        text   = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
-        parsed = json.loads(text)
+        gemini_cache_key = f"gemini_{today}"
+
+        cached_ai = await cache_get(gemini_cache_key)
+
+        if cached_ai:
+            parsed = cached_ai
+        else:
+            try:
+                text = await _generate(prompt, timeout=30.0)
+                text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
+
+                parsed = json.loads(text)
+
+                await cache_set(
+                    gemini_cache_key,
+                    parsed,
+                    ttl=1440
+                )
+
+            except Exception:
+                raise
     except Exception:
         bullets_fb = {
             "world":     [a["title"] for a in articles if a["category"] == "world"][:3],
@@ -633,7 +673,7 @@ HEADLINES:\n{hl_text}"""
         "articles":  articles[:16],
         "timestamp": datetime.now(SGT).isoformat(),
     }
-    await cache_set("brief_v3", result, ttl=60)
+    await cache_set(cache_key, result, ttl=1440)
 
     # Save daily snapshot (uses SGT date)
     sent_map = {"bullish": 70, "bearish": 25, "cautious": 35, "neutral": 50}
@@ -761,7 +801,8 @@ async def chat(req: ChatRequest):
         return {"response": "GEMINI_API_KEY not configured.", "sources": []}
 
     today_context, sources = "", []
-    brief_cache = await cache_get("brief_v3")
+    today = datetime.now(SGT).strftime("%Y-%m-%d")
+    brief_cache = await cache_get(f"brief_{today}")
     if brief_cache:
         ns  = brief_cache.get("news_summary", {})
         art = brief_cache.get("articles", [])
