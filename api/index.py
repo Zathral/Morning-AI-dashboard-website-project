@@ -673,7 +673,7 @@ HEADLINES:\n{hl_text}"""
         "articles":  articles[:16],
         "timestamp": datetime.now(SGT).isoformat(),
     }
-    await cache_set(cache_key, result, ttl=1440)
+    await cache_set(cache_key, result, ttl=720)
 
     # Save daily snapshot (uses SGT date)
     sent_map = {"bullish": 70, "bearish": 25, "cautious": 35, "neutral": 50}
@@ -851,5 +851,17 @@ async def chat(req: ChatRequest):
             answer = f"Sorry, I ran into an issue: {msg[:120]}"
 
     return {"response": answer, "sources": sources}
+
+@app.get("/api/debug-feeds")
+async def debug_feeds():
+    articles = await _fetch_articles()
+
+    counts = {}
+
+    for a in articles:
+        cat = a["category"]
+        counts[cat] = counts.get(cat, 0) + 1
+
+    return counts
 
 handler = Mangum(app, lifespan="off")
