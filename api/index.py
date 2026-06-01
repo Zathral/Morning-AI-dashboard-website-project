@@ -224,33 +224,60 @@ def _headline_entities(articles: list, limit: int = 8) -> list:
             for name, count in counts.most_common(limit)]
 
 def _local_trends(articles: list) -> list:
+    # 1. Match multi-word proper nouns (e.g., "Wall Street")
     multi_proper = re.compile(r'\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+)\b')
+    # 2. Match single capitalized words (e.g., "Nvidia", "Iran")
+    single_proper = re.compile(r'\b([A-Z][a-z]{3,})\b')
+    # 3. Match pure acronyms (e.g., "MAS", "TSLA")
     acronym_pat  = re.compile(r'\b([A-Z]{2,6})\b')
+    # 4. Custom hot themes that are normally lowercase
+    hot_themes = re.compile(r'\b(drone attacks?|tariffs?|interest rates?|inflation|earnings|missiles?)\b', re.IGNORECASE)
+
+    # Expanded skip list to catch single-word sentence starters
     skip_phrases  = {"The","This","That","New","Top","How","Why","What","More",
-                     "After","Since","During","Under","Over","About","Also","Even"}
+                     "After","Since","During","Under","Over","About","Also","Even",
+                     "Says","Will","Could","From","With","Your","Have","Update","Report",
+                     "When","Where","Who","Which","Just","World","Global","Asia"}
     skip_acronyms = {"US","UK","EU","UN","AM","PM","GMT","CEO","CFO","GDP","IMF",
                      "WHO","WTO","IPO","ETF","NFT","PDF","RSS","CNN","BBC","NBC",
                      "ABC","CBS","FOX","AFP","CNA","SGT","SGD","USD","JPY","EUR",
                      "FY","IT","OR","IN","AS","AT","BY","TO","OF","ON","NO","AI"}
+    
     counts, cat_count = Counter(), {}
+    
     for a in articles:
         title, cat, seen = a.get("title",""), a.get("category","other"), set()
-        for phrase in multi_proper.findall(title):
-            if phrase not in skip_phrases and phrase not in seen:
-                seen.add(phrase); counts[phrase] += 1
+        
+        # Gather all entity types from the headline
+        entities = []
+        entities.extend(multi_proper.findall(title))
+        entities.extend(single_proper.findall(title))
+        entities.extend(acronym_pat.findall(title))
+        entities.extend(hot_themes.findall(title))
+
+        for raw_phrase in entities:
+            # Capitalize hot themes for visual consistency if they were caught in lowercase
+            phrase = raw_phrase.title() if raw_phrase.islower() else raw_phrase
+            
+            if phrase.upper() in skip_acronyms or phrase in skip_phrases:
+                continue
+                
+            if phrase not in seen:
+                seen.add(phrase)
+                counts[phrase] += 1
                 cat_count.setdefault(phrase, Counter())[cat] += 1
-        for acr in acronym_pat.findall(title):
-            if acr not in skip_acronyms and acr not in seen:
-                seen.add(acr); counts[acr] += 1
-                cat_count.setdefault(acr, Counter())[cat] += 1
+                
     total = max(len(articles), 1)
     topics = []
+    
     for topic, count in counts.most_common(20):
+        # Allow hot topics to surface even if mentioned only twice
         if count < 2: continue
         cat = cat_count[topic].most_common(1)[0][0]
         topics.append({"topic":topic,"count":count,"pct":round(count/total*100),
                         "category":cat,"sentiment":"neutral"})
         if len(topics) == 8: break
+        
     return topics
 
 async def _fetch_articles() -> list:
@@ -559,20 +586,21 @@ async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: floa
 
 @app.get("/api/brief")
 async def get_brief(name: str = "Jeremy"):
-
-    today = datetime.now(SGT).strftime("%Y-%m-%d")
-    cache_key = f"brief_{today}"
-
-    today = datetime.now(SGT).strftime("%Y-%m-%d")
-    print(f"Generating brief for {today}")
+    
+    # Create a 3-hour bucket (0 to 7) based on current hour
+    now = datetime.now(SGT)
+    today = now.strftime("%Y-%m-%d")
+    time_window = now.hour // 3  
+    
+    # Append the window to the cache key
+    cache_key = f"brief_{today}_w{time_window}"
+    print(f"Generating brief for {today} (Window {time_window})")
 
     cached = await cache_get(cache_key)
     if cached:
         return cached
 
-    # Fetch articles, weather, and market concurrently. Cache is preferred, but
-    # cold starts still need live data so the first load does not get stuck with
-    # empty context.
+    # Fetch articles, weather, and market concurrently.
     articles, market_data, weather_data = await asyncio.gather(
         _fetch_articles(),
         cached_or_fetch("market_v3", get_market, {"market": {}}, timeout=12.0),
@@ -636,27 +664,25 @@ WEATHER: {wx_text}
 HEADLINES:\n{hl_text}"""
 
     try:
-        gemini_cache_key = f"gemini_{today}"
+            # Match the Gemini cache key to the same 3-hour window
+            gemini_cache_key = f"gemini_{today}_w{time_window}"
 
-        cached_ai = await cache_get(gemini_cache_key)
+            cached_ai = await cache_get(gemini_cache_key)
 
-        if cached_ai:
-            parsed = cached_ai
-        else:
-            try:
-                text = await _generate(prompt, timeout=30.0)
-                text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
+            if cached_ai:
+                parsed = cached_ai
+            else:
+                try:
+                    text = await _generate(prompt, timeout=30.0)
+                    text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
 
-                parsed = json.loads(text)
+                    parsed = json.loads(text)
 
-                await cache_set(
-                    gemini_cache_key,
-                    parsed,
-                    ttl=1440
-                )
+                    # Set TTL to 180 minutes (3 hours)
+                    await cache_set(gemini_cache_key, parsed, ttl=180)
 
-            except Exception:
-                raise
+                except Exception:
+                    raise
     except Exception:
         bullets_fb = {
             "world":     [a["title"] for a in articles if a["category"] == "world"][:3],
@@ -686,7 +712,7 @@ HEADLINES:\n{hl_text}"""
         "articles":  articles,
         "timestamp": datetime.now(SGT).isoformat(),
     }
-    await cache_set(cache_key, result, ttl=720)
+    await cache_set(cache_key, result, ttl=180)
 
     # Save daily snapshot (uses SGT date)
     sent_map = {"bullish": 70, "bearish": 25, "cautious": 35, "neutral": 50}
