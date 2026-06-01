@@ -58,7 +58,7 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = []
 
 # ── Gemini helpers ────────────────────────────────────────────────────────────
-_GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b"]
+_GEMINI_MODELS = ["gemini-2.0-flash"]
 
 def _get_model_name() -> str:
     return _GEMINI_MODELS[0]
