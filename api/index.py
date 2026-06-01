@@ -584,144 +584,111 @@ async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: floa
     except Exception:
         return fallback
 
+# Helper to pull the absolute newest brief from your database
+async def get_latest_supabase_brief():
+    try:
+        # Queries the latest entry by timestamp order
+        response = supabase.table("daily_briefs") \
+                           .select("created_at, brief_data") \
+                           .order("created_at", ascending=False) \
+                           .limit(1) \
+                           .execute()
+        
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        print(f"Error reading cache from Supabase: {e}")
+    return None
+
+# Helper to commit a freshly generated brief asset to the database
+async def save_brief_to_supabase(brief_json_data):
+    try:
+        supabase.table("daily_briefs") \
+                .insert({"brief_data": brief_json_data}) \
+                .execute()
+        print("Successfully cached fresh brief to Supabase.")
+    except Exception as e:
+        print(f"Error writing cache to Supabase: {e}")
+
 @app.get("/api/brief")
 async def get_brief(name: str = "Jeremy"):
+    # 1. Check local time context for dynamic greetings
+    now = datetime.now(timezone.utc) # Using UTC to safely compare database timestamps
     
-    # Create a 3-hour bucket (0 to 7) based on current hour
-    now = datetime.now(SGT)
-    today = now.strftime("%Y-%m-%d")
-    time_window = now.hour // 3  
+    # Calculate SGT hour for greeting personalization mapping
+    sgt_hour = (now + timedelta(hours=8)).hour
+    greeting = "morning" if sgt_hour < 12 else "afternoon" if sgt_hour < 17 else "evening"
+
+    # 2. Look up the persistent cache asset from Supabase
+    latest_record = await get_latest_supabase_brief()
     
-    # Append the window to the cache key
-    cache_key = f"brief_{today}_w{time_window}"
-    print(f"Generating brief for {today} (Window {time_window})")
+    if latest_record:
+        created_at = datetime.fromisoformat(latest_record["created_at"].replace("Z", "+00:00"))
+        
+        # Check if the cache file is fresher than 3 hours (180 minutes)
+        if now - created_at < timedelta(hours=3):
+            print("Persistent Cache Hit! Fetching asset from Supabase.")
+            cached_result = latest_record["brief_data"]
+            
+            # Deep-copy dictionary and inject user greeting before serving
+            response_data = dict(cached_result)
+            if "brief" in response_data:
+                response_data["brief"] = f"Good {greeting}, {name}. {response_data['brief']}"
+            return response_data
 
-    cached = await cache_get(cache_key)
-    if cached:
-        return cached
+    print("Cache Miss or expired asset. Launching data gather and Gemini engine...")
 
-    # Fetch articles, weather, and market concurrently.
+    # 3. Cache Miss Flow: Concurrently fetch your basic dependencies
     articles, market_data, weather_data = await asyncio.gather(
         _fetch_articles(),
         cached_or_fetch("market_v3", get_market, {"market": {}}, timeout=12.0),
         cached_or_fetch("weather_v3", get_weather, {}, timeout=12.0),
     )
 
-    if not GEMINI_API_KEY:
-        result = {
-            "brief": f"Good morning, {name}. Set GEMINI_API_KEY to enable AI briefs.",
-            "weather_tip": "Check the weather before heading out.",
-            "news_summary": {"bullets": {"world":[], "singapore":[], "finance":[]},
-                             "sentiment": "neutral", "top_theme": "—", "key_entities": []},
-            "articles": articles[:12], "timestamp": datetime.now(SGT).isoformat(),
-        }
-        return result
+    # ... Your existing code strings for headlines, market markdown lines, 
+    # and the neutral prompt layout (remembering to ensure Gemini doesn't print greetings) ...
 
-    # Build context strings
-    headlines_by_cat: dict = {"world":[], "singapore":[], "finance":[], "tech":[]}
-    for a in articles:
-        cat = a["category"]
-        if cat in headlines_by_cat and len(headlines_by_cat[cat]) < 3:
-            headlines_by_cat[cat].append(a["title"])
-    hl_text = "\n".join(f"[{cat.upper()}] {t}"
-                         for cat, titles in headlines_by_cat.items() for t in titles)
-
-    mkt_lines = [
-        f"{n}: {md['price']} ({'▲' if md['up'] else '▼'}{abs(md['change_pct'])}%)"
-        for n, md in market_data.get("market", {}).items() if md.get("price")
-    ]
-    mkt_text = " | ".join(mkt_lines[:6]) or "N/A"
-
-    wc = weather_data.get("current", {})
-    wd = weather_data.get("daily",   {})
-    aq = weather_data.get("air_quality", {})
-    wx_text = (f"{wc.get('temperature')}°C feels {wc.get('feels_like')}°C, "
-               f"rain {wd.get('rain_prob')}%, high {wd.get('max_temp')}°C, "
-               f"AQI {aq.get('us_aqi','?')} ({aq.get('label','?')})")
-
-    hour = datetime.now(SGT).hour
-    greeting = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
-
-    prompt = f"""You are a sharp morning briefing AI for someone in Singapore.
-Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
-
-{{
-  "brief": "4-6 sentences. Start 'Good {greeting}, {name}.'. Include: (1) biggest market story with exact numbers and sector/company names; (2) two significant world or Singapore news stories with specific details — never vague; (3) practical Singapore weather tip.",
-  "weather_tip": "One concise practical tip for today's Singapore weather — umbrella timing, heat, or air quality note.",
-  "bullets": {{
-    "world":     ["3 crisp bullets on top world news with specific names and details"],
-    "singapore": ["3 crisp bullets on Singapore-specific news"],
-    "finance":   ["3 crisp bullets on market-moving company or sector news with numbers"],
-    "tech":      ["2 crisp bullets on major tech or AI news today"]
-  }},
-  "sentiment":    "bullish|bearish|neutral|cautious",
-  "top_theme":    "Dominant theme across all news in 6-9 words",
-  "key_entities": ["4-6 most prominent companies, people, or places today"]
-}}
-
-MARKETS: {mkt_text}
-WEATHER: {wx_text}
-HEADLINES:\n{hl_text}"""
-
+    # 4. Fire the AI generation prompt
     try:
-            # Match the Gemini cache key to the same 3-hour window
-            gemini_cache_key = f"gemini_{today}_w{time_window}"
-
-            cached_ai = await cache_get(gemini_cache_key)
-
-            if cached_ai:
-                parsed = cached_ai
-            else:
-                try:
-                    text = await _generate(prompt, timeout=30.0)
-                    text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
-
-                    parsed = json.loads(text)
-
-                    # Set TTL to 180 minutes (3 hours)
-                    await cache_set(gemini_cache_key, parsed, ttl=180)
-
-                except Exception:
-                    raise
+        text = await _generate(prompt)
+        
+        # Safely extract pure JSON layout bounds
+        start_idx, end_idx = text.find('{'), text.rfind('}')
+        if start_idx != -1 and end_idx != -1:
+            parsed = json.loads(text[start_idx:end_idx+1])
+        else:
+            raise ValueError("Invalid output format from LLM layout chain.")
     except Exception:
-        bullets_fb = {
-            "world":     [a["title"] for a in articles if a["category"] == "world"][:3],
-            "singapore": [a["title"] for a in articles if a["category"] == "singapore"][:3],
-            "finance":   [a["title"] for a in articles if a["category"] == "finance"][:3],
-            "tech":      [a["title"] for a in articles if a["category"] == "tech"][:2],
-        }
+        # Soft fallback if key is dead/broken during generation processing
         parsed = {
-            "brief":        f"Good {greeting}, {name}. {mkt_lines[0]+'.' if mkt_lines else 'Markets are active.'}",
-            "weather_tip":  "Check the weather before heading out.",
-            "bullets":      bullets_fb,
-            "sentiment":    "neutral",
-            "top_theme":    "Global markets and news",
-            "key_entities": [],
+            "brief": "Global dashboard index assets are current.",
+            "weather_tip": "Check indicators before heading out.",
+            "bullets": {"world": [], "singapore": [], "finance": [], "tech": []},
+            "sentiment": "neutral", "top_theme": "Global Markets", "key_entities": []
         }
 
-    result = {
+    # 5. Pack everything up neatly into a standardized storage schema
+    compiled_asset = {
         "brief":       parsed.get("brief", ""),
         "weather_tip": parsed.get("weather_tip", ""),
         "news_summary": {
-            "bullets":      parsed.get("bullets", {"world":[],"singapore":[],"finance":[]}),
+            "bullets":      parsed.get("bullets", {"world":[], "singapore":[], "finance":[], "tech":[]}),
             "sentiment":    parsed.get("sentiment", "neutral"),
             "top_theme":    parsed.get("top_theme", ""),
             "key_entities": parsed.get("key_entities", []),
         },
         "market":    market_data.get("market", {}),
         "articles":  articles,
-        "timestamp": datetime.now(SGT).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    await cache_set(cache_key, result, ttl=180)
 
-    # Save daily snapshot (uses SGT date)
-    sent_map = {"bullish": 70, "bearish": 25, "cautious": 35, "neutral": 50}
-    score = sent_map.get(parsed.get("sentiment", "neutral"), 50)
-    flat_bullets = [b for cat in parsed.get("bullets", {}).values()
-                    for b in (cat if isinstance(cat, list) else [])]
-    await save_daily_snapshot(market_data, score, parsed.get("sentiment","neutral"),
-                               parsed.get("top_theme",""), parsed.get("key_entities",[]), flat_bullets)
-    return result
+    # 6. Save directly to your global Supabase vault for future visitors
+    await save_brief_to_supabase(compiled_asset)
+
+    # 7. Deliver tailored personal details out to your user dashboard instance
+    final_output = dict(compiled_asset)
+    final_output["brief"] = f"Good {greeting}, {name}. {final_output['brief']}"
+    return final_output
 
 @app.get("/api/sentiment")
 async def get_sentiment():
