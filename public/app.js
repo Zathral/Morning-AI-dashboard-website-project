@@ -272,8 +272,15 @@ function renderWatchlistCards() {
         :`<div class="wl-na">Unavailable</div>`}
     </div>`;
   }).join('');
-  grid.querySelectorAll('.wl-remove').forEach(btn=>{
-    btn.addEventListener('click',e=>{e.stopPropagation();removeTicker(btn.dataset.sym);});
+  grid.querySelectorAll('.wl-card').forEach(card => {
+    card.style.cursor = 'pointer'; // Makes it obvious it is clickable
+    card.addEventListener('click', (e) => {
+      // Ensure clicking the tiny delete cross doesn't fire a modal crawl window
+      if (e.target.classList.contains('wl-remove')) return;
+      
+      const symbol = card.querySelector('.wl-symbol').textContent;
+      openStockNewsModal(symbol);
+    });
   });
 }
 
@@ -309,6 +316,51 @@ async function addPresetGroup(group) {
   await saveWatchlist();
   await refreshWatchlistData();
 }
+
+async function openStockNewsModal(symbol) {
+  const modal = qs('#news-modal');
+  const title = qs('#stock-news-title');
+  const subtitle = qs('#stock-news-subtitle');
+  const list = qs('#stock-news-list');
+  
+  // Set up loading layout state
+  title.textContent = `${symbol} Coverage`;
+  subtitle.textContent = "Fetching individual coverage tracks...";
+  list.innerHTML = '<li class="skel-news"></li><li class="skel-news"></li>';
+  modal.classList.remove('hidden');
+  
+  try {
+    const data = await fetchJson(`/api/stock-news?ticker=${encodeURIComponent(symbol)}`, 15000);
+    
+    if (!data.news || data.news.length === 0) {
+      subtitle.textContent = "No recent articles found.";
+      list.innerHTML = '<li class="error-msg">No market documents found matching this ticker index today.</li>';
+      return;
+    }
+    
+    subtitle.textContent = `Latest headlines via Yahoo Finance`;
+    list.innerHTML = data.news.map(art => `
+      <li class="news-item" style="padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.04);">
+        <span class="news-cat" style="background: rgba(90,120,255,0.1); color: var(--teal); font-size: 10px;">
+          ${art.publisher}
+        </span>
+        <span class="news-title">
+          <a href="${art.link}" target="_blank" rel="noopener" style="text-decoration: none; color: var(--f1);">
+            ${art.title}
+          </a>
+        </span>
+      </li>
+    `).join('');
+    
+  } catch (e) {
+    subtitle.textContent = "Error gathering news elements.";
+    list.innerHTML = `<li class="error-msg">Failed to connect: ${e.message}</li>`;
+  }
+}
+
+// Close Actions wireup
+qs('#news-close').addEventListener('click', () => qs('#news-modal').classList.add('hidden'));
+qs('#news-modal').addEventListener('click', e => { if(e.target === qs('#news-modal')) qs('#news-modal').classList.add('hidden'); });
 
 // ── Sentiment gauge (Clean arc rendering fix) ──────────────────────────────
 function buildGaugeSVG(score) {

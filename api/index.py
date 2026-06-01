@@ -575,6 +575,25 @@ async def get_market():
     await cache_set("market_v3", result, ttl=5)
     return result
 
+@app.get("/api/stock-news")
+async def get_stock_news(ticker: str):
+    try:
+        # yfinance makes stock-specific crawling completely trivial
+        stock = yf.Ticker(ticker.upper())
+        news_items = stock.news  # Returns a list of article dicts
+        
+        formatted_news = []
+        for item in news_items[:5]:  # Just grab the top 5 stories
+            formatted_news.append({
+                "title": item.get("title"),
+                "link": item.get("link"),
+                "publisher": item.get("publisher", "Yahoo Finance")
+            })
+            
+        return {"ticker": ticker, "news": formatted_news}
+    except Exception as e:
+        return {"ticker": ticker, "news": [], "error": str(e)}
+
 async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: float = 12.0) -> dict:
     cached = await cache_get(cache_key)
     if cached:
