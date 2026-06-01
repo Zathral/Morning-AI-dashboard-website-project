@@ -58,7 +58,7 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = []
 
 # ── Gemini helpers ────────────────────────────────────────────────────────────
-_GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]
+_GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b"]
 
 def _get_model_name() -> str:
     return _GEMINI_MODELS[0]
@@ -70,7 +70,7 @@ def _generate_sync(prompt: str, model_name: str = None) -> str:
         try:
             model = genai.GenerativeModel(attempt_name)
 
-            for retry in range(3):
+            for retry in range(1):
                 try:
                     return model.generate_content(prompt).text
                 except Exception as e:

@@ -163,7 +163,7 @@ main{position:relative;z-index:1;max-width:1200px;margin:0 auto;
 .preset-add-btn:hover{border-color:var(--up);color:var(--up);background:rgba(0,229,160,.06)}
 .watchlist-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
 .wl-card{background:var(--card-2);border:1px solid var(--border);border-radius:var(--r-sm);
-  padding:12px 14px;position:relative;overflow:hidden;transition:border-color .2s;min-height:100px}
+  padding:12px 14px 52px;position:relative;overflow:hidden;transition:border-color .2s;min-height:110px}
 .wl-card:hover{border-color:var(--border-hi)}
 .wl-card.up  {border-left:2px solid var(--up)}
 .wl-card.down{border-left:2px solid var(--down)}

@@ -328,8 +328,9 @@ function buildGaugeSVG(score) {
   svg+=`<path d="M${s0.x},${s0.y} A${r},${r} 0 0,1 ${e0.x},${e0.y}" stroke="rgba(255,255,255,0.07)" stroke-width="${sw+2}" fill="none" stroke-linecap="round"/>`;
   for(let i=0;i<5;i++){
     const sp=pt(angles[i]),ep=pt(angles[i+1]);
-    const extra=i===si?` filter="url(#sg)" stroke-width="${sw+4}"`:`stroke-width="${sw}"`;
-    svg+=`<path d="M${sp.x},${sp.y} A${r},${r} 0 0,1 ${ep.x},${ep.y}" stroke="${colors[i]}" fill="none" stroke-linecap="butt"${extra}/>`;
+    const isActive=i===si;
+    const extra=isActive?` filter="url(#sg)" opacity="1"`:` opacity="0.45"`;
+    svg+=`<path d="M${sp.x},${sp.y} A${r},${r} 0 0,1 ${ep.x},${ep.y}" stroke="${colors[i]}" stroke-width="${sw}" fill="none" stroke-linecap="butt"${extra}/>`;
   }
   const na=180-(score/100)*180, npt=pt(na);
   const nx=cx+(npt.x-cx)*0.70, ny=cy+(npt.y-cy)*0.70;
