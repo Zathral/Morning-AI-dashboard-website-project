@@ -313,67 +313,45 @@ async function addPresetGroup(group) {
 // ── Sentiment gauge (Clean arc rendering fix) ──────────────────────────────
 function buildGaugeSVG(score) {
   score = Math.max(0, Math.min(100, score));
-  // cx, cy = center point of the gauge arch. r = radius. sw = stroke width.
-  const cx = 120, cy = 95, r = 74, sw = 12, W = 240, H = 135;
+  const cx = 120, cy = 96, r = 76, sw = 14, W = 240, H = 136; // Lifted cy and H slightly for better layout clearance
   const colors = ['#ff4f6d', '#ff8c42', '#ffb830', '#7bc67e', '#00e5a0'];
   const labels = ['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed'];
   
-  // High-precision coordinate calculation to eliminate subpixel rounding errors
-  function pt(deg) {
-    const rad = deg * Math.PI / 180;
-    return {
-      x: (cx + r * Math.cos(rad)),
-      y: (cy - r * Math.sin(rad))
-    };
+  // pt(): standard-math angle → SVG coords (y flipped)
+  function pt(deg) { 
+    const rad = deg * Math.PI / 180; 
+    return { x: +(cx + r * Math.cos(rad)).toFixed(2), y: +(cy - r * Math.sin(rad)).toFixed(2) }; 
   }
   
   const angles = [180, 144, 108, 72, 36, 0];
   const si = Math.min(4, Math.floor(score / 20)), ac = colors[si];
   const s0 = pt(180), e0 = pt(0);
 
-  let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="overflow: visible; shape-rendering: geometricPrecision;">`;
+  let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">`;
+  svg += `<defs><filter id="sg" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
   
-  // Redesigned Glow Filter: Prevents boundary clipping and structural pinching
-  svg += `<defs>
-    <filter id="sg" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>`;
+  // FIX: Swapped stroke-linecap="round" to "butt" to align geometries and prevent distortion artifacts
+  svg += `<path d="M${s0.x},${s0.y} A${r},${r} 0 0,1 ${e0.x},${e0.y}" stroke="rgba(255,255,255,0.07)" stroke-width="${sw + 2}" fill="none" stroke-linecap="butt"/>`;
   
-  // 1. The Dark Background Track Loop (Draws a single seamless background arch underneath)
-  svg += `<path d="M${s0.x},${s0.y} A${r},${r} 0 0,1 ${e0.x},${e0.y}" stroke="rgba(255,255,255,0.06)" stroke-width="${sw}" fill="none" stroke-linecap="square"/>`;
-  
-  // 2. Overlay colored segments dynamically
   for (let i = 0; i < 5; i++) {
     const sp = pt(angles[i]), ep = pt(angles[i + 1]);
-    if (i === si) {
-      // FIX: The active slice gets a slight nested padding adjustment and independent stroke-width handling
-      svg += `<path d="M${sp.x},${sp.y} A${r},${r} 0 0,1 ${ep.x},${ep.y}" stroke="${colors[i]}" stroke-width="${sw - 0.5}" fill="none" stroke-linecap="square" filter="url(#sg)"/>`;
-    } else {
-      svg += `<path d="M${sp.x},${sp.y} A${r},${r} 0 0,1 ${ep.x},${ep.y}" stroke="${colors[i]}" stroke-width="${sw}" fill="none" stroke-linecap="square" opacity="0.18"/>`;
-    }
+    const isActive = i === si;
+    const extra = isActive ? ` filter="url(#sg)" opacity="1"` : ` opacity="0.45"`;
+    svg += `<path d="M${sp.x},${sp.y} A${r},${r} 0 0,1 ${ep.x},${ep.y}" stroke="${colors[i]}" stroke-width="${sw}" fill="none" stroke-linecap="butt"${extra}/>`;
   }
   
-  // 3. Pointer calculation and construction
   const na = 180 - (score / 100) * 180, npt = pt(na);
-  const nx = cx + (npt.x - cx) * 0.72, ny = cy + (npt.y - cy) * 0.72;
+  const nx = cx + (npt.x - cx) * 0.70, ny = cy + (npt.y - cy) * 0.70;
   const perp = (na + 90) * Math.PI / 180;
-  const b1 = { x: (cx + 5 * Math.cos(perp)), y: (cy - 5 * Math.sin(perp)) };
-  const b2 = { x: (cx - 5 * Math.cos(perp)), y: (cy + 5 * Math.sin(perp)) };
+  const b1 = { x: +(cx + 6 * Math.cos(perp)).toFixed(1), y: +(cy - 6 * Math.sin(perp)).toFixed(1) };
+  const b2 = { x: +(cx - 6 * Math.cos(perp)).toFixed(1), y: +(cy + 6 * Math.sin(perp)).toFixed(1) };
   
-  svg += `<polygon points="${nx},${ny} ${b1.x},${b1.y} ${b2.x},${b2.y}" fill="${ac}" opacity="0.95"/>`;
-  svg += `<circle cx="${cx}" cy="${cy}" r="5" fill="${ac}"/><circle cx="${cx}" cy="${cy}" r="2" fill="#07090f"/>`;
-  
-  // 4. Texts and Labels
-  svg += `<text x="${cx}" y="${cy + 22}" text-anchor="middle" font-size="22" font-weight="700" fill="${ac}" font-family="'Space Mono',monospace">${score}</text>`;
-  svg += `<text x="${cx}" y="${cy + 34}" text-anchor="middle" font-size="8.5" font-weight="600" fill="#6a7a9a" font-family="'DM Sans',sans-serif" letter-spacing="0.5">${labels[si].toUpperCase()}</text>`;
-  svg += `<text x="${s0.x + 8}" y="${cy + 18}" text-anchor="middle" font-size="8" fill="#3a4460" font-family="'DM Sans',sans-serif" font-weight="500">FEAR</text>`;
-  svg += `<text x="${e0.x - 8}" y="${cy + 18}" text-anchor="middle" font-size="8" fill="#3a4460" font-family="'DM Sans',sans-serif" font-weight="500">GREED</text>`;
-  
+  svg += `<polygon points="${nx.toFixed(1)},${ny.toFixed(1)} ${b1.x},${b1.y} ${b2.x},${b2.y}" fill="${ac}" opacity="0.95"/>`;
+  svg += `<circle cx="${cx}" cy="${cy}" r="6" fill="${ac}"/><circle cx="${cx}" cy="${cy}" r="3" fill="#07090f"/>`;
+  svg += `<text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="20" font-weight="700" fill="${ac}" font-family="'Space Mono',monospace">${score}</text>`;
+  svg += `<text x="${cx}" y="${cy + 28}" text-anchor="middle" font-size="8" fill="#6a7a9a" font-family="'DM Sans',sans-serif">${labels[si].toUpperCase()}</text>`;
+  svg += `<text x="${s0.x + 10}" y="${cy + 16}" text-anchor="middle" font-size="8" fill="#6a7a9a" font-family="'DM Sans',sans-serif">FEAR</text>`;
+  svg += `<text x="${e0.x - 10}" y="${cy + 16}" text-anchor="middle" font-size="8" fill="#6a7a9a" font-family="'DM Sans',sans-serif">GREED</text>`;
   svg += `</svg>`;
   return svg;
 }
