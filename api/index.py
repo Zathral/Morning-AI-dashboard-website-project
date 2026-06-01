@@ -98,13 +98,22 @@ async def _generate(prompt: str, timeout: float = 30.0) -> str:
     )
 
 def _chat_sync(model_name: str, system: str, history: list, message: str) -> str:
+    """generate_content with multi-turn messages — no system_instruction (compatibility fix)."""
+    messages = []
+    if system:
+        messages += [
+            {"role": "user",  "parts": [system]},
+            {"role": "model", "parts": ["Understood."]},
+        ]
+    messages += list(history)
+    messages.append({"role": "user", "parts": [message]})
     for attempt in [model_name] + [m for m in _GEMINI_MODELS if m != model_name]:
         try:
-            m = genai.GenerativeModel(attempt, system_instruction=system)
-            return m.start_chat(history=history).send_message(message).text.strip()
+            return genai.GenerativeModel(attempt).generate_content(messages).text.strip()
         except Exception as e:
-            if "not found" in str(e).lower() or "404" in str(e):
-                continue
+            s = str(e).lower()
+            if "not found" in s or "404" in s: continue
+            if "429" in str(e) or "quota" in s: raise RuntimeError("RATE_LIMIT")
             raise
     raise RuntimeError("All chat models failed")
 
@@ -215,52 +224,33 @@ def _headline_entities(articles: list, limit: int = 8) -> list:
             for name, count in counts.most_common(limit)]
 
 def _local_trends(articles: list) -> list:
-    """Extract trending named entities from headlines using capitalisation patterns."""
-    # Multi-word proper nouns: "Federal Reserve", "Elon Musk", "Hong Kong"
-    multi_proper = re.compile(r'\b([A-Z][a-z]{1,}(?:\s+[A-Z][a-z]{1,})+)\b')
-    # Acronyms: AI, NVIDIA, NATO, OPEC — at least 2 caps
-    acronym_pat  = re.compile(r'\b([A-Z]{2,})\b')
-
-    skip_phrases  = {"The", "In", "On", "At", "By", "Of", "No"}
-    skip_acronyms = {"US", "UK", "EU", "UN", "AM", "PM", "GMT", "CEO", "GDP",
-                     "IMF", "WHO", "WTO", "IPO", "ETF", "NFT", "PDF", "RSS",
-                     "CNN", "BBC", "NBC", "ABC", "CBS"}
-
-    counts    = Counter()
-    cat_count = {}
-
+    multi_proper = re.compile(r'\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})+)\b')
+    acronym_pat  = re.compile(r'\b([A-Z]{2,6})\b')
+    skip_phrases  = {"The","This","That","New","Top","How","Why","What","More",
+                     "After","Since","During","Under","Over","About","Also","Even"}
+    skip_acronyms = {"US","UK","EU","UN","AM","PM","GMT","CEO","CFO","GDP","IMF",
+                     "WHO","WTO","IPO","ETF","NFT","PDF","RSS","CNN","BBC","NBC",
+                     "ABC","CBS","FOX","AFP","CNA","SGT","SGD","USD","JPY","EUR",
+                     "FY","IT","OR","IN","AS","AT","BY","TO","OF","ON","NO","AI"}
+    counts, cat_count = Counter(), {}
     for a in articles:
-        title = a.get("title", "")
-        cat   = a.get("category", "other")
-        seen  = set()
-
+        title, cat, seen = a.get("title",""), a.get("category","other"), set()
         for phrase in multi_proper.findall(title):
             if phrase not in skip_phrases and phrase not in seen:
-                seen.add(phrase)
-                counts[phrase] += 1
+                seen.add(phrase); counts[phrase] += 1
                 cat_count.setdefault(phrase, Counter())[cat] += 1
-
         for acr in acronym_pat.findall(title):
             if acr not in skip_acronyms and acr not in seen:
-                seen.add(acr)
-                counts[acr] += 1
+                seen.add(acr); counts[acr] += 1
                 cat_count.setdefault(acr, Counter())[cat] += 1
-
-    total  = max(len(articles), 1)
+    total = max(len(articles), 1)
     topics = []
     for topic, count in counts.most_common(20):
-        if count < 2:
-            continue
-        category = cat_count[topic].most_common(1)[0][0]
-        topics.append({
-            "topic":    topic,
-            "count":    count,
-            "pct":      round(count / total * 100),
-            "category": category,
-            "sentiment": "neutral",
-        })
-        if len(topics) == 8:
-            break
+        if count < 2: continue
+        cat = cat_count[topic].most_common(1)[0][0]
+        topics.append({"topic":topic,"count":count,"pct":round(count/total*100),
+                        "category":cat,"sentiment":"neutral"})
+        if len(topics) == 8: break
     return topics
 
 async def _fetch_articles() -> list:

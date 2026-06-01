@@ -51,11 +51,19 @@ function fmtPrice(p, sym='') {
 
 function sparkline(vals, up) {
   if(!vals||vals.length<2) return '';
-  const w=80,h=30,p=2;
+  const w=100,h=44,p=3;
   const mn=Math.min(...vals),mx=Math.max(...vals),rng=mx-mn||1;
   const pts=vals.map((v,i)=>`${(p+i/(vals.length-1)*(w-p*2)).toFixed(1)},${(h-p-(v-mn)/rng*(h-p*2)).toFixed(1)}`).join(' ');
   const c=up?'#00e5a0':'#ff4f6d';
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.9"/></svg>`;
+  const gid=`sg${up?'u':'d'}`;
+  return `<svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${c}" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="${c}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <polygon points="${p},${h} ${pts} ${w-p},${h}" fill="url(#${gid})"/>
+    <polyline points="${pts}" fill="none" stroke="${c}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+  </svg>`;
 }
 
 // ── Fetch with timeout ─────────────────────────────────────────────────────
@@ -125,7 +133,7 @@ function renderNewsBullets(bullets, tab) {
   let items=[];
   if(typeof bullets==='object'&&!Array.isArray(bullets)){
     items=tab==='all'?Object.values(bullets).flat():
-      (bullets[tab==='world'?'world':tab==='singapore'?'singapore':'finance']||[]);
+      (bullets[tab]||[]);
   } else if(Array.isArray(bullets)){
     items=bullets;
   }
@@ -618,3 +626,13 @@ updateClock();
 setInterval(updateClock, 1000);
 setInterval(loadAll, 30*60*1000);
 loadAll();
+
+// ── Personalisation ───────────────────────────────────────────────────────
+(function() {
+  const about = qs('.about-section');
+  if (!about) return;
+  const el = document.createElement('div');
+  el.style.cssText = 'text-align:center;padding:20px 0 8px;opacity:0.75';
+  el.innerHTML = '<img src="/bro.png" alt="bro handles it himself" style="max-width:300px;width:100%;border-radius:10px;display:inline-block">';
+  about.insertAdjacentElement('afterend', el);
+})();
