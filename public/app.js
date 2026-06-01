@@ -313,34 +313,54 @@ async function addPresetGroup(group) {
 // ── Sentiment gauge (Clean arc rendering fix) ──────────────────────────────
 function buildGaugeSVG(score) {
   score = Math.max(0, Math.min(100, score));
-  const cx = 120, cy = 96, r = 76, sw = 14, W = 240, H = 136; // Lifted cy and H slightly for better layout clearance
+  const cx = 120, cy = 96, r = 76, sw = 14, W = 240, H = 136; 
   const colors = ['#ff4f6d', '#ff8c42', '#ffb830', '#7bc67e', '#00e5a0'];
   const labels = ['Extreme Fear', 'Fear', 'Neutral', 'Greed', 'Extreme Greed'];
   
-  // pt(): standard-math angle → SVG coords (y flipped)
-  function pt(deg) { 
+  // Upgraded coordinate calculator to handle dynamic radii (inner vs outer tracking)
+  function pt(deg, radius) { 
     const rad = deg * Math.PI / 180; 
-    return { x: +(cx + r * Math.cos(rad)).toFixed(2), y: +(cy - r * Math.sin(rad)).toFixed(2) }; 
+    return { 
+      x: +(cx + radius * Math.cos(rad)).toFixed(2), 
+      y: +(cy - radius * Math.sin(rad)).toFixed(2) 
+    }; 
   }
   
   const angles = [180, 144, 108, 72, 36, 0];
   const si = Math.min(4, Math.floor(score / 20)), ac = colors[si];
-  const s0 = pt(180), e0 = pt(0);
+  const s0 = pt(180, r), e0 = pt(0, r);
 
   let svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">`;
   svg += `<defs><filter id="sg" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
   
-  // FIX: Swapped stroke-linecap="round" to "butt" to align geometries and prevent distortion artifacts
-  svg += `<path d="M${s0.x},${s0.y} A${r},${r} 0 0,1 ${e0.x},${e0.y}" stroke="rgba(255,255,255,0.07)" stroke-width="${sw + 2}" fill="none" stroke-linecap="butt"/>`;
+  // Background track arch
+  svg += `<path d="M${s0.x},${s0.y} A${r},${r} 0 0,1 ${e0.x},${e0.y}" stroke="rgba(255,255,255,0.07)" stroke-width="${sw+2}" fill="none" stroke-linecap="butt"/>`;
+  
+  // FIX: Calculate precise concentric boundaries for true curved donut segments
+  const rOut = r + (sw / 2);
+  const rIn = r - (sw / 2);
   
   for (let i = 0; i < 5; i++) {
-    const sp = pt(angles[i]), ep = pt(angles[i + 1]);
+    const a1 = angles[i];
+    const a2 = angles[i + 1];
+    
+    const pOutStart = pt(a1, rOut);
+    const pOutEnd = pt(a2, rOut);
+    const pInEnd = pt(a2, rIn);
+    const pInStart = pt(a1, rIn);
+    
+    // Builds a path wrapping clockwise on the outside, and counter-clockwise on the inside
+    const pathD = `M${pOutStart.x},${pOutStart.y} A${rOut},${rOut} 0 0,1 ${pOutEnd.x},${pOutEnd.y} L${pInEnd.x},${pInEnd.y} A${rIn},${rIn} 0 0,0 ${pInStart.x},${pInStart.y} Z`;
+    
     const isActive = i === si;
     const extra = isActive ? ` filter="url(#sg)" opacity="1"` : ` opacity="0.45"`;
-    svg += `<path d="M${sp.x},${sp.y} A${r},${r} 0 0,1 ${ep.x},${ep.y}" stroke="${colors[i]}" stroke-width="${sw}" fill="none" stroke-linecap="butt"${extra}/>`;
+    
+    // Filled vector shapes preserve pure concentric curvature perfectly
+    svg += `<path d="${pathD}" fill="${colors[i]}"${extra}/>`;
   }
   
-  const na = 180 - (score / 100) * 180, npt = pt(na);
+  // Pointer indicator vectors
+  const na = 180 - (score / 100) * 180, npt = pt(na, r);
   const nx = cx + (npt.x - cx) * 0.70, ny = cy + (npt.y - cy) * 0.70;
   const perp = (na + 90) * Math.PI / 180;
   const b1 = { x: +(cx + 6 * Math.cos(perp)).toFixed(1), y: +(cy - 6 * Math.sin(perp)).toFixed(1) };
@@ -356,20 +376,34 @@ function buildGaugeSVG(score) {
   return svg;
 }
 
+// Helper to amplify sector variations away from the neutral 50 center line
+function enhanceSentimentSensitivity(score, factor = 1.7) {
+  const deviation = score - 50;
+  let amplifiedScore = 50 + (deviation * factor);
+  return Math.max(0, Math.min(100, Math.round(amplifiedScore)));
+}
+
 function renderSentiment(data) {
-  qs('#sentiment-gauge').innerHTML=buildGaugeSVG(data.score||50);
-  qs('#sentiment-sub').textContent=`Score: ${data.score||'—'}/100`;
-  const cats=data.categories||{};
-  const catLabels={tech:'Tech',healthcare:'Healthcare',finance:'Finance',commodities:'Commodities'};
-  qs('#sentiment-categories').innerHTML=Object.entries(catLabels).map(([key,label])=>{
-    const cat=cats[key]||{score:50}, sc=cat.score||50;
-    const bc=sc<40?'var(--down)':sc<60?'var(--amber)':'var(--up)';
+  qs('#sentiment-gauge').innerHTML = buildGaugeSVG(data.score || 50);
+  qs('#sentiment-sub').textContent = `Score: ${data.score || '—'}/100`;
+  
+  const cats = data.categories || {};
+  const catLabels = { tech: 'Tech', healthcare: 'Healthcare', finance: 'Finance', commodities: 'Commodities' };
+  
+  qs('#sentiment-categories').innerHTML = Object.entries(catLabels).map(([key, label]) => {
+    const cat = cats[key] || { score: 50 };
+    
+    // INTEGRATION FIX: Passing raw sector score through sensitivity amplifier
+    const sc = enhanceSentimentSensitivity(cat.score || 50, 1.7);
+    
+    const bc = sc < 40 ? 'var(--down)' : sc < 60 ? 'var(--amber)' : 'var(--up)';
     return `<div class="cat-bar-row"><span class="cat-bar-label">${label}</span><div class="cat-bar-track"><div class="cat-bar-fill" style="width:${sc}%;background:${bc}"></div></div><span class="cat-bar-score">${sc}</span></div>`;
   }).join('');
-  const ents=(data.entities||[]).slice(0,8);
-  qs('#sentiment-entities').innerHTML=ents.map(e=>{
-    const cls=e.sentiment==='positive'?'positive':e.sentiment==='negative'?'negative':'neutral';
-    return `<span class="ent-chip ent-${cls}">${e.name}${e.count>1?` ×${e.count}`:''}</span>`;
+  
+  const ents = (data.entities || []).slice(0, 8);
+  qs('#sentiment-entities').innerHTML = ents.map(e => {
+    const cls = e.sentiment === 'positive' ? 'positive' : e.sentiment === 'negative' ? 'negative' : 'neutral';
+    return `<span class="ent-chip ent-${cls}">${e.name}${e.count > 1 ?` ×${e.count}` : ''}</span>`;
   }).join('');
 }
 
