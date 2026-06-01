@@ -177,7 +177,7 @@ main{position:relative;z-index:1;max-width:1200px;margin:0 auto;
 .wl-price{font-family:var(--font-mono);font-size:.95rem;font-weight:700;color:var(--t1)}
 .wl-change{font-family:var(--font-mono);font-size:.68rem;margin-top:2px}
 .wl-change.up{color:var(--up)} .wl-change.down{color:var(--down)}
-.wl-sparkline{position:absolute;bottom:0;right:0;width:72px;height:30px;opacity:.55}
+.wl-sparkline{position:absolute;bottom:0;left:0;right:0;height:44px;opacity:.55;pointer-events:none}
 .wl-insight{font-size:.65rem;color:var(--t2);margin-top:5px;line-height:1.35;
   padding-right:10px;display:block;font-style:italic}
 .wl-in-news{font-family:var(--font-mono);font-size:.55rem;color:var(--amber);margin-top:3px;display:block}
