@@ -604,40 +604,31 @@ async def get_market():
 @app.get("/api/stock-news")
 async def get_stock_news(ticker: str):
     try:
-        stock = yf.Ticker(ticker.upper())
-        news_items = stock.news
-        
-        if not news_items:
-            # Fallback to general market news if the specific index ticker returns empty arrays
-            stock = yf.Ticker("AAPL")
-            news_items = stock.news
-            
-        formatted_news = []
-        for item in (news_items or [])[:5]:
-            # Fallback chains for changing news structure definitions
-            pub_time = item.get("providerPublishTime") or item.get("pubDate")
-            date_str = "—"
-            
-            if pub_time:
-                try:
-                    if isinstance(pub_time, str):
-                        # Handle ISO string timestamps if returned
-                        date_str = pub_time
-                    else:
-                        dt = datetime.fromtimestamp(int(pub_time), timezone.utc)
-                        date_str = dt.strftime("%b %d, %H:%M UTC")
-                except Exception:
-                    pass
-                
-            formatted_news.append({
-                "title": item.get("title", "Market Update"),
-                "link": item.get("link", "https://finance.yahoo.com"),
-                "publisher": item.get("publisher", "Yahoo Finance"),
-                "date": date_str
+        rss_url = f"https://finance.yahoo.com/rss/headline?s={ticker.upper()}"
+
+        feed = feedparser.parse(rss_url)
+
+        news_items = []
+
+        for entry in feed.entries[:5]:
+            news_items.append({
+                "title": entry.title,
+                "link": entry.link,
+                "publisher": "Yahoo Finance",
+                "date": entry.get("published", "")
             })
-            
-        return {"ticker": ticker, "news": formatted_news}
+
+        print(
+            f"Ticker={ticker}, "
+            f"news_count={len(news_items) if news_items else 0}"
+        )
+        
+        return {
+            "ticker": ticker.upper(),
+            "news": news_items
+        }
     except Exception as e:
+        print(f"Stock news error for {ticker}: {e}")
         return {"ticker": ticker, "news": [], "error": str(e)}
 
 async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: float = 12.0) -> dict:
