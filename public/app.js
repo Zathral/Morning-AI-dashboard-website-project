@@ -323,53 +323,56 @@ async function openStockNewsModal(symbol) {
   const subtitle = qs('#stock-news-subtitle');
   const list = qs('#stock-news-list');
   
-  // Set up loading layout state
+  // Set up loading state
   title.textContent = `${symbol} Coverage`;
-  subtitle.textContent = "Fetching individual coverage tracks...";
-  list.innerHTML = '<li class="skel-news"></li><li class="skel-news"></li>';
+  subtitle.textContent = "Fetching latest news...";
+  list.innerHTML = '<li class="skel-news"></li><li class="skel-news"></li><li class="skel-news"></li>';
   modal.classList.remove('hidden');
   
   try {
-    // FIX: Fallback to sending 'symbol=' if your FastAPI backend standardized on symbol parameters
     const data = await fetchJson(`/api/stock-news?symbol=${encodeURIComponent(symbol)}&ticker=${encodeURIComponent(symbol)}`, 15000);
-    
-    // FIX: Check both 'data.news' and 'data.articles' to catch whatever key your API backend returns
     const newsArticles = data.news || data.articles || [];
     
     if (!newsArticles || newsArticles.length === 0) {
-      subtitle.textContent = "No recent articles found.";
-      list.innerHTML = '<li class="error-msg">No market documents found matching this ticker index today.</li>';
+      subtitle.textContent = "No recent articles found for this ticker.";
+      list.innerHTML = '<li class="error-msg" style="padding: 24px; text-align: center;">No news coverage available at this time.</li>';
       return;
     }
     
-    subtitle.textContent = `Latest headlines via Yahoo Finance`;
-    list.innerHTML = newsArticles.map(art => `
-      <li class="news-item" style="padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04); display: flex; flex-direction: column; gap: 4px;">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <span class="news-cat" style="background: rgba(90,120,255,0.1); color: var(--teal); font-size: 10px; padding: 2px 6px; border-radius: 4px; margin: 0;">
-            ${art.publisher || 'Finance'}
-          </span>
-          <span style="font-size: 10px; color: #6a7a9a; font-family: 'Space Mono', monospace;">
-            ${art.date || 'Today'}
-          </span>
+    subtitle.textContent = `Latest headlines (${newsArticles.length} articles)`;
+    list.innerHTML = newsArticles.slice(0, 12).map(art => `
+      <li class="news-item">
+        <div class="stock-news-meta">
+          <span class="stock-news-publisher">${art.publisher || 'Market News'}</span>
+          <span class="stock-news-date">${art.date || 'Recent'}</span>
         </div>
-        <span class="news-title" style="margin-top: 2px;">
-          <a href="${art.link || '#'}" target="_blank" rel="noopener" style="text-decoration: none; color: var(--f1); font-size: 13px; line-height: 1.45; font-weight: 500;">
-            ${art.title}
-          </a>
-        </span>
+        <div class="stock-news-title">
+          <a href="${art.link || '#'}" target="_blank" rel="noopener noreferrer">${art.title}</a>
+        </div>
+        ${art.summary ? `<div class="stock-news-summary">${art.summary.substring(0, 150)}${art.summary.length > 150 ? '...' : ''}</div>` : ''}
       </li>
     `).join('');
     
   } catch (e) {
-    subtitle.textContent = "Error gathering news elements.";
-    list.innerHTML = `<li class="error-msg">Failed to connect: ${e.message}</li>`;
+    subtitle.textContent = "Error loading news";
+    list.innerHTML = `<li class="error-msg" style="padding: 24px; text-align: center;">Failed to load: ${e.message}</li>`;
   }
 }
 
-// Close Actions wireup
+// Close modal when clicking the X button
 qs('#news-close').addEventListener('click', () => qs('#news-modal').classList.add('hidden'));
-qs('#news-modal').addEventListener('click', e => { if(e.target === qs('#news-modal')) qs('#news-modal').classList.add('hidden'); });
+
+// Close modal when clicking outside
+qs('#news-modal').addEventListener('click', e => { 
+  if (e.target === qs('#news-modal')) qs('#news-modal').classList.add('hidden'); 
+});
+
+// Also handle Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !qs('#news-modal').classList.contains('hidden')) {
+    qs('#news-modal').classList.add('hidden');
+  }
+});
 
 // ── Sentiment gauge (Clean arc rendering fix) ──────────────────────────────
 function buildGaugeSVG(score) {

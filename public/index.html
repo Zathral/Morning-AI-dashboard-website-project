@@ -253,16 +253,16 @@
 </div>
 
 <div id="news-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box" style="max-width: 500px;">
-    <h3 class="modal-title" id="stock-news-title">Stock Headlines</h3>
-    <p class="modal-sub" id="stock-news-subtitle">Loading latest coverage...</p>
-    
-    <ul id="stock-news-list" class="news-list" style="margin: 16px 0; max-height: 300px; overflow-y: auto;">
-      </ul>
-    
-    <div class="modal-actions">
-      <button id="news-close" class="btn-primary">Close</button>
+  <div class="modal-box modal-news-box">
+    <div class="modal-header">
+      <h3 class="modal-title" id="stock-news-title">Stock Headlines</h3>
+      <button id="news-close" class="modal-close-btn" aria-label="Close">&times;</button>
     </div>
+    <p class="modal-sub" id="stock-news-subtitle">Loading latest coverage...</p>
+    <ul id="stock-news-list" class="stock-news-list">
+      <li class="skel-news"></li>
+      <li class="skel-news"></li>
+    </ul>
   </div>
 </div>
 
