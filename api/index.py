@@ -5,7 +5,7 @@ from typing import Optional, List
 from urllib.parse import quote
 
 from fastapi.responses import HTMLResponse
-import time
+import time, random
 import feedparser
 import yfinance as yf
 import httpx
@@ -58,10 +58,16 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = []
 
 # ── Gemini helpers ────────────────────────────────────────────────────────────
-_GEMINI_MODELS = ["gemini-2.5-flash", "gemini-3.5-flash"]
+_GEMINI_MODELS = [
+    "gemini-2.5-flash",              # Fast, great all-rounder
+    "gemini-2.5-flash-lite",         # Cost-effective, high-volume
+    "gemini-3.1-flash-lite", # New, fast preview
+    "gemini-3-flash",                # Reliable workhorse (if needed)
+    "gemini-3.5-flash"
+]
 
 def _get_model_name() -> str:
-    return _GEMINI_MODELS[0]
+    return random.choice(_GEMINI_MODELS)
 
 def _generate_sync(prompt: str, model_name: str = None) -> str:
     if not client:
