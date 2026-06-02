@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from urllib.parse import quote
 
+from fastapi.responses import HTMLResponse
 import time
 import feedparser
 import yfinance as yf
