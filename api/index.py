@@ -5,7 +5,7 @@ from typing import Optional, List
 from urllib.parse import quote
 
 from fastapi.responses import HTMLResponse
-import time
+import time, random
 import feedparser
 import yfinance as yf
 import httpx
@@ -58,7 +58,13 @@ class ChatRequest(BaseModel):
     history: List[ChatMessage] = []
 
 # ── Gemini helpers ────────────────────────────────────────────────────────────
-_GEMINI_MODELS = ["gemini-2.5-flash", "gemini-3.5-flash"]
+_GEMINI_MODELS = [
+    "gemini-3.5-flash",              # Fast, great all-rounder
+    "gemini-3.0-flash",         # Cost-effective, high-volume
+    "gemini-3.1-flash-lite", # New, fast preview
+    "gemini-2.5-flash-lite",                # Reliable workhorse (if needed)
+    "gemini-2.5-flash"
+]
 
 def _get_model_name() -> str:
     return _GEMINI_MODELS[0]
@@ -969,24 +975,41 @@ async def chat(req: ChatRequest):
               "Be specific with numbers. 2-4 sentences unless a list is better. "
               "If the answer isn't in the context, say so honestly.")
               
-    try:
-        # Pass the system instruction parameter inside the generative config routing dict
-        answer = await asyncio.wait_for(
-            asyncio.to_thread(
-                client.models.generate_content,
-                model=_get_model_name(),
-                contents=gem_history,
-                config={"system_instruction": system} if system else None
-            ),
-            timeout=28.0
-        )
-        answer = answer.text.strip()
-    except Exception as e:
-        msg = str(e).lower()
-        if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
+    answer = None
+    last_error = ""
+    
+    # Waterfall fallback: try each model in order
+    for attempt_model in _GEMINI_MODELS:
+        try:
+            # Pass the system instruction parameter inside the generative config routing dict
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=attempt_model,
+                    contents=gem_history,
+                    config={"system_instruction": system} if system else None
+                ),
+                timeout=28.0
+            )
+            answer = response.text.strip()
+            break  # Success! Stop trying other models.
+            
+        except Exception as e:
+            last_error = str(e).lower()
+            
+            # If the model is rate-limited (429) or doesn't exist/no access (404), try the next one!
+            if "404" in last_error or "not found" in last_error or "429" in last_error or "quota" in last_error or "resource_exhausted" in last_error:
+                continue
+                
+            # If it's a completely different API crash, stop trying
+            break
+
+    # Final error handling if ALL models in the list failed
+    if not answer:
+        if "429" in last_error or "quota" in last_error or "resource_exhausted" in last_error:
             answer = "Gemini is rate-limited right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
         else:
-            answer = f"Sorry, I ran into an issue: {str(e)[:120]}"
+            answer = f"Sorry, I ran into an issue: {last_error[:120]}"
 
     return {"response": answer, "sources": sources}
 
