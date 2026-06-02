@@ -618,10 +618,10 @@ async def get_latest_supabase_brief():
     try:
         # Queries the latest entry by timestamp order
         response = supabase.table("daily_briefs") \
-                           .select("created_at, brief_data") \
-                           .order("created_at", ascending=False) \
-                           .limit(1) \
-                           .execute()
+                        .select("created_at, brief_data") \
+                        .order("created_at", desc=True) \
+                        .limit(1) \
+                        .execute()
         
         if response.data and len(response.data) > 0:
             return response.data[0]
