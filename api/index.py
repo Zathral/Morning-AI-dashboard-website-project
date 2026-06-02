@@ -167,13 +167,16 @@ async def cache_get(key: str) -> Optional[dict]:
         return None
     try:
         def _get():
-            return supabase.table("cache").select("data,expires_at").eq("key", key).single().execute()
+            return supabase.table("cache").select("data,expires_at").eq("key", key).execute()
         r = await asyncio.wait_for(asyncio.to_thread(_get), timeout=3.0)
-        if r.data:
-            exp = datetime.fromisoformat(r.data["expires_at"].replace("Z", "+00:00"))
+        if r.data and len(r.data) > 0:
+            row = r.data[0]
+            exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
             if exp > datetime.now(timezone.utc):
-                return r.data["data"]
-    except Exception:
+                return row["data"]
+    except Exception as e:
+        # Silently log or pass so a cache lookup failure never crashes the /api/chat endpoint
+        print(f"Cache lookup bypassed for key {key}: {e}")
         pass
     return None
 
@@ -886,8 +889,8 @@ async def chat(req: ChatRequest):
             timeout=28.0
         )
     except Exception as e:
-        msg = str(e)
-        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+        msg = str(e).lower()
+        if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
             answer = "Gemini is rate-limited right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
         else:
             answer = f"Sorry, I ran into an issue: {msg[:120]}"
