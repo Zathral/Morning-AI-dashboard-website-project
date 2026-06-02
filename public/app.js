@@ -330,30 +330,31 @@ async function openStockNewsModal(symbol) {
   modal.classList.remove('hidden');
   
   try {
-    const data = await fetchJson(`/api/stock-news?ticker=${encodeURIComponent(symbol)}`, 15000);
+    // FIX: Fallback to sending 'symbol=' if your FastAPI backend standardized on symbol parameters
+    const data = await fetchJson(`/api/stock-news?symbol=${encodeURIComponent(symbol)}&ticker=${encodeURIComponent(symbol)}`, 15000);
     
-    if (!data.news || data.news.length === 0) {
+    // FIX: Check both 'data.news' and 'data.articles' to catch whatever key your API backend returns
+    const newsArticles = data.news || data.articles || [];
+    
+    if (!newsArticles || newsArticles.length === 0) {
       subtitle.textContent = "No recent articles found.";
       list.innerHTML = '<li class="error-msg">No market documents found matching this ticker index today.</li>';
       return;
     }
     
     subtitle.textContent = `Latest headlines via Yahoo Finance`;
-    list.innerHTML = data.news.map(art => `
+    list.innerHTML = newsArticles.map(art => `
       <li class="news-item" style="padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04); display: flex; flex-direction: column; gap: 4px;">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-          <!-- Publisher Tag -->
           <span class="news-cat" style="background: rgba(90,120,255,0.1); color: var(--teal); font-size: 10px; padding: 2px 6px; border-radius: 4px; margin: 0;">
-            ${art.publisher}
+            ${art.publisher || 'Finance'}
           </span>
-          <!-- Dynamic Live Published Time -->
           <span style="font-size: 10px; color: #6a7a9a; font-family: 'Space Mono', monospace;">
-            ${art.date}
+            ${art.date || 'Today'}
           </span>
         </div>
-        <!-- Article Title Link -->
         <span class="news-title" style="margin-top: 2px;">
-          <a href="${art.link}" target="_blank" rel="noopener" style="text-decoration: none; color: var(--f1); font-size: 13px; line-height: 1.45; font-weight: 500;">
+          <a href="${art.link || '#'}" target="_blank" rel="noopener" style="text-decoration: none; color: var(--f1); font-size: 13px; line-height: 1.45; font-weight: 500;">
             ${art.title}
           </a>
         </span>
