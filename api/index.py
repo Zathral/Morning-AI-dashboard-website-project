@@ -99,27 +99,44 @@ async def _generate(prompt: str, timeout: float = 30.0) -> str:
 def _chat_sync(model_name: str, system: str, history: list, message: str) -> str:
     if not client:
         raise RuntimeError("Gemini Client is not initialized")
+    
+    # We construct a clean list of history inputs that the new SDK understands natively
     messages = []
-    if system:
-        messages += [
-            {"role": "user",  "parts": [system]},
-            {"role": "model", "parts": ["Understood."]},
-        ]
-    messages += list(history)
-    messages.append({"role": "user", "parts": [message]})
+    
+    # Process history list provided by the endpoint request
+    for msg in history:
+        role = "user" if msg.get("role") == "user" else "model"
+        # Extract content text string safely
+        parts_list = msg.get("parts", [])
+        text_content = parts_list[0] if parts_list else ""
+        if isinstance(text_content, dict):
+            text_content = text_content.get("text", "")
+            
+        messages.append({
+            "role": role,
+            "parts": [{"text": str(text_content)}]
+        })
+
+    # Append the newest user message at the very end
+    messages.append({
+        "role": "user",
+        "parts": [{"text": str(message)}]
+    })
     
     for attempt in [model_name] + [m for m in _GEMINI_MODELS if m != model_name]:
         try:
+            # We explicitly pass the system instruction using the SDK's dedicated config parameter
             response = client.models.generate_content(
                 model=attempt,
-                contents=messages
+                contents=messages,
+                config={"system_instruction": system} if system else None
             )
             return response.text.strip()
         except Exception as e:
             s = str(e).lower()
             if "not found" in s or "404" in s: 
                 continue
-            if "429" in s or "quota" in s: 
+            if "429" in s or "quota" in s or "resource_exhausted" in s: 
                 raise RuntimeError("RATE_LIMIT")
             raise
     raise RuntimeError("All chat models failed")
