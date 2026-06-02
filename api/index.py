@@ -63,35 +63,31 @@ def _get_model_name() -> str:
     return _GEMINI_MODELS[0]
 
 def _generate_sync(prompt: str, model_name: str = None) -> str:
-        if not client:
-            raise RuntimeError("Gemini Client is not initialized")
-        name = model_name or _get_model_name()
-        for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
-            try:
-                for retry in range(1):
-                    try:
-                      # Updated to modern generation syntax
-                        response = client.models.generate_content(
-                            model=attempt_name,
-                            contents=prompt
-                        )
-                        return response.text
-                    except Exception as e:
-                        if "429" in str(e):
-                            time.sleep(2 ** retry)
-                            continue
-                        raise
-            except Exception as e:
-                msg = str(e).lower()
-
+    if not client:
+        raise RuntimeError("Gemini Client is not initialized")
+    name = model_name or _get_model_name()
+    for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
+        try:
+            for retry in range(1):
+                try:
+                    response = client.models.generate_content(
+                        model=attempt_name,
+                        contents=prompt
+                    )
+                    return response.text
+                except Exception as e:
+                    if "429" in str(e):
+                        time.sleep(2 ** retry)
+                        continue
+                    raise
+        except Exception as e:
+            msg = str(e).lower()
             if "429" in msg:
                 raise RuntimeError("RATE_LIMIT")
-
             if "not found" in msg or "404" in msg:
                 continue
-
             raise
-        raise RuntimeError("All Gemini models failed")
+    raise RuntimeError("All Gemini models failed")
 
 async def _generate(prompt: str, timeout: float = 30.0) -> str:
     """Async wrapper for Gemini with timeout. Safe for serverless."""
@@ -111,9 +107,9 @@ def _chat_sync(model_name: str, system: str, history: list, message: str) -> str
         ]
     messages += list(history)
     messages.append({"role": "user", "parts": [message]})
+    
     for attempt in [model_name] + [m for m in _GEMINI_MODELS if m != model_name]:
         try:
-            # Modern execution routing using structured message arrays
             response = client.models.generate_content(
                 model=attempt,
                 contents=messages
@@ -121,9 +117,11 @@ def _chat_sync(model_name: str, system: str, history: list, message: str) -> str
             return response.text.strip()
         except Exception as e:
             s = str(e).lower()
-        if "not found" in s or "404" in s: continue
-        if "429" in str(e) or "quota" in s: raise RuntimeError("RATE_LIMIT")
-        raise
+            if "not found" in s or "404" in s: 
+                continue
+            if "429" in s or "quota" in s: 
+                raise RuntimeError("RATE_LIMIT")
+            raise
     raise RuntimeError("All chat models failed")
 
 # ── RSS feeds ─────────────────────────────────────────────────────────────────
@@ -538,7 +536,7 @@ async def get_watchlist_data(tickers: str = ",".join(DEFAULT_WATCHLIST)):
                         "change_pct": 0, "sparkline": [], "up": True})
             for sym, res in zip(ticker_list, results)}
     result = {"data": data}
-    await cache_set(cache_key, result, ttl=3)
+    await cache_set(cache_key, result, ttl=15)
     return result
 
 @app.get("/api/watchlist/{session_key}")
