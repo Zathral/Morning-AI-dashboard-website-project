@@ -578,16 +578,26 @@ async def get_market():
 @app.get("/api/stock-news")
 async def get_stock_news(ticker: str):
     try:
-        # yfinance makes stock-specific crawling completely trivial
         stock = yf.Ticker(ticker.upper())
-        news_items = stock.news  # Returns a list of article dicts
+        news_items = stock.news
         
         formatted_news = []
-        for item in news_items[:5]:  # Just grab the top 5 stories
+        for item in news_items[:5]:
+            # Read the built-in Unix epoch timestamp
+            pub_time = item.get("providerPublishTime")
+            date_str = "—"
+            
+            if pub_time:
+                # Convert integer seconds to an explicit UTC datetime object
+                dt = datetime.fromtimestamp(pub_time, timezone.utc)
+                # Format into an elegant layout (e.g., "Jun 02, 13:29 UTC")
+                date_str = dt.strftime("%b %d, %H:%M UTC")
+                
             formatted_news.append({
                 "title": item.get("title"),
                 "link": item.get("link"),
-                "publisher": item.get("publisher", "Yahoo Finance")
+                "publisher": item.get("publisher", "Yahoo Finance"),
+                "date": date_str
             })
             
         return {"ticker": ticker, "news": formatted_news}
