@@ -272,8 +272,15 @@ function renderWatchlistCards() {
         :`<div class="wl-na">Unavailable</div>`}
     </div>`;
   }).join('');
-  grid.querySelectorAll('.wl-remove').forEach(btn=>{
-    btn.addEventListener('click',e=>{e.stopPropagation();removeTicker(btn.dataset.sym);});
+  grid.querySelectorAll('.wl-card').forEach(card => {
+    card.style.cursor = 'pointer'; // Makes it obvious it is clickable
+    card.addEventListener('click', (e) => {
+      // Ensure clicking the tiny delete cross doesn't fire a modal crawl window
+      if (e.target.classList.contains('wl-remove')) return;
+      
+      const symbol = card.querySelector('.wl-symbol').textContent;
+      openStockNewsModal(symbol);
+    });
   });
 }
 
@@ -309,6 +316,63 @@ async function addPresetGroup(group) {
   await saveWatchlist();
   await refreshWatchlistData();
 }
+
+async function openStockNewsModal(symbol) {
+  const modal = qs('#news-modal');
+  const title = qs('#stock-news-title');
+  const subtitle = qs('#stock-news-subtitle');
+  const list = qs('#stock-news-list');
+  
+  // Set up loading state
+  title.textContent = `${symbol} Coverage`;
+  subtitle.textContent = "Fetching latest news...";
+  list.innerHTML = '<li class="skel-news"></li><li class="skel-news"></li><li class="skel-news"></li>';
+  modal.classList.remove('hidden');
+  
+  try {
+    const data = await fetchJson(`/api/stock-news?symbol=${encodeURIComponent(symbol)}&ticker=${encodeURIComponent(symbol)}`, 15000);
+    const newsArticles = data.news || data.articles || [];
+    
+    if (!newsArticles || newsArticles.length === 0) {
+      subtitle.textContent = "No recent articles found for this ticker.";
+      list.innerHTML = '<li class="error-msg" style="padding: 24px; text-align: center;">No news coverage available at this time.</li>';
+      return;
+    }
+    
+    subtitle.textContent = `Latest headlines (${newsArticles.length} articles)`;
+    list.innerHTML = newsArticles.slice(0, 12).map(art => `
+      <li class="news-item">
+        <div class="stock-news-meta">
+          <span class="stock-news-publisher">${art.publisher || 'Market News'}</span>
+          <span class="stock-news-date">${art.date || 'Recent'}</span>
+        </div>
+        <div class="stock-news-title">
+          <a href="${art.link || '#'}" target="_blank" rel="noopener noreferrer">${art.title}</a>
+        </div>
+        ${art.summary ? `<div class="stock-news-summary">${art.summary.substring(0, 150)}${art.summary.length > 150 ? '...' : ''}</div>` : ''}
+      </li>
+    `).join('');
+    
+  } catch (e) {
+    subtitle.textContent = "Error loading news";
+    list.innerHTML = `<li class="error-msg" style="padding: 24px; text-align: center;">Failed to load: ${e.message}</li>`;
+  }
+}
+
+// Close modal when clicking the X button
+qs('#news-close').addEventListener('click', () => qs('#news-modal').classList.add('hidden'));
+
+// Close modal when clicking outside
+qs('#news-modal').addEventListener('click', e => { 
+  if (e.target === qs('#news-modal')) qs('#news-modal').classList.add('hidden'); 
+});
+
+// Also handle Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !qs('#news-modal').classList.contains('hidden')) {
+    qs('#news-modal').classList.add('hidden');
+  }
+});
 
 // ── Sentiment gauge (Clean arc rendering fix) ──────────────────────────────
 function buildGaugeSVG(score) {

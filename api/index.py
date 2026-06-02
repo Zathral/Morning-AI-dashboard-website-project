@@ -8,7 +8,7 @@ import time
 import feedparser
 import yfinance as yf
 import httpx
-import google.generativeai as genai
+from google import genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -33,8 +33,7 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_ANON_KEY", "")
 # Singapore timezone (UTC+8) — used throughout for correct local time comparisons
 SGT = timezone(timedelta(hours=8))
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 supabase = None
 if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
@@ -64,15 +63,18 @@ def _get_model_name() -> str:
     return _GEMINI_MODELS[0]
 
 def _generate_sync(prompt: str, model_name: str = None) -> str:
-    """Run Gemini synchronously — call via asyncio.to_thread to avoid blocking."""
+    if not client:
+        raise RuntimeError("Gemini Client is not initialized")
     name = model_name or _get_model_name()
     for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
         try:
-            model = genai.GenerativeModel(attempt_name)
-
             for retry in range(1):
                 try:
-                    return model.generate_content(prompt).text
+                    response = client.models.generate_content(
+                        model=attempt_name,
+                        contents=prompt
+                    )
+                    return response.text
                 except Exception as e:
                     if "429" in str(e):
                         time.sleep(2 ** retry)
@@ -80,13 +82,10 @@ def _generate_sync(prompt: str, model_name: str = None) -> str:
                     raise
         except Exception as e:
             msg = str(e).lower()
-
             if "429" in msg:
                 raise RuntimeError("RATE_LIMIT")
-
             if "not found" in msg or "404" in msg:
                 continue
-
             raise
     raise RuntimeError("All Gemini models failed")
 
@@ -98,36 +97,60 @@ async def _generate(prompt: str, timeout: float = 30.0) -> str:
     )
 
 def _chat_sync(model_name: str, system: str, history: list, message: str) -> str:
-    """generate_content with multi-turn messages — no system_instruction (compatibility fix)."""
+    if not client:
+        raise RuntimeError("Gemini Client is not initialized")
+    
+    # We construct a clean list of history inputs that the new SDK understands natively
     messages = []
-    if system:
-        messages += [
-            {"role": "user",  "parts": [system]},
-            {"role": "model", "parts": ["Understood."]},
-        ]
-    messages += list(history)
-    messages.append({"role": "user", "parts": [message]})
+    
+    # Process history list provided by the endpoint request
+    for msg in history:
+        role = "user" if msg.get("role") == "user" else "model"
+        # Extract content text string safely
+        parts_list = msg.get("parts", [])
+        text_content = parts_list[0] if parts_list else ""
+        if isinstance(text_content, dict):
+            text_content = text_content.get("text", "")
+            
+        messages.append({
+            "role": role,
+            "parts": [{"text": str(text_content)}]
+        })
+
+    # Append the newest user message at the very end
+    messages.append({
+        "role": "user",
+        "parts": [{"text": str(message)}]
+    })
+    
     for attempt in [model_name] + [m for m in _GEMINI_MODELS if m != model_name]:
         try:
-            return genai.GenerativeModel(attempt).generate_content(messages).text.strip()
+            # We explicitly pass the system instruction using the SDK's dedicated config parameter
+            response = client.models.generate_content(
+                model=attempt,
+                contents=messages,
+                config={"system_instruction": system} if system else None
+            )
+            return response.text.strip()
         except Exception as e:
             s = str(e).lower()
-            if "not found" in s or "404" in s: continue
-            if "429" in str(e) or "quota" in s: raise RuntimeError("RATE_LIMIT")
+            if "not found" in s or "404" in s: 
+                continue
+            if "429" in s or "quota" in s or "resource_exhausted" in s: 
+                raise RuntimeError("RATE_LIMIT")
             raise
     raise RuntimeError("All chat models failed")
 
 # ── RSS feeds ─────────────────────────────────────────────────────────────────
+# ── RSS feeds ─────────────────────────────────────────────────────────────────
 RSS_FEEDS = [
-    {"url": "http://feeds.bbci.co.uk/news/world/rss.xml",            "category": "world"},
-    {"url": "https://feeds.reuters.com/reuters/worldNews",           "category": "world"},
+    {"url": "https://feeds.bbci.co.uk/news/world/rss.xml", "category": "world"},
     {"url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416", "category": "singapore"},
     {"url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=679471", "category": "singapore"},
-    {"url": "https://mothership.sg/feed/",                          "category": "singapore"},
+    {"url": "https://mothership.sg/feed/", "category": "singapore"},
     {"url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "category": "finance"},
-    {"url": "https://feeds.reuters.com/reuters/businessNews",        "category": "finance"},
-    {"url": "http://feeds.bbci.co.uk/news/business/rss.xml",         "category": "finance"},
-    {"url": "https://techcrunch.com/feed/",                          "category": "tech"},
+    {"url": "https://finance.yahoo.com/news/rssfeed", "category": "finance"},
+    {"url": "https://techcrunch.com/feed/", "category": "tech"},
 ]
 
 # ── Market symbols ────────────────────────────────────────────────────────────
@@ -160,13 +183,16 @@ async def cache_get(key: str) -> Optional[dict]:
         return None
     try:
         def _get():
-            return supabase.table("cache").select("data,expires_at").eq("key", key).single().execute()
+            return supabase.table("cache").select("data,expires_at").eq("key", key).execute()
         r = await asyncio.wait_for(asyncio.to_thread(_get), timeout=3.0)
-        if r.data:
-            exp = datetime.fromisoformat(r.data["expires_at"].replace("Z", "+00:00"))
+        if r.data and len(r.data) > 0:
+            row = r.data[0]
+            exp = datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
             if exp > datetime.now(timezone.utc):
-                return r.data["data"]
-    except Exception:
+                return row["data"]
+    except Exception as e:
+        # Silently log or pass so a cache lookup failure never crashes the /api/chat endpoint
+        print(f"Cache lookup bypassed for key {key}: {e}")
         pass
     return None
 
@@ -529,7 +555,7 @@ async def get_watchlist_data(tickers: str = ",".join(DEFAULT_WATCHLIST)):
                         "change_pct": 0, "sparkline": [], "up": True})
             for sym, res in zip(ticker_list, results)}
     result = {"data": data}
-    await cache_set(cache_key, result, ttl=3)
+    await cache_set(cache_key, result, ttl=15)
     return result
 
 @app.get("/api/watchlist/{session_key}")
@@ -575,6 +601,36 @@ async def get_market():
     await cache_set("market_v3", result, ttl=5)
     return result
 
+@app.get("/api/stock-news")
+async def get_stock_news(ticker: str):
+    try:
+        rss_url = f"https://finance.yahoo.com/rss/headline?s={ticker.upper()}"
+
+        feed = feedparser.parse(rss_url)
+
+        news_items = []
+
+        for entry in feed.entries[:5]:
+            news_items.append({
+                "title": entry.title,
+                "link": entry.link,
+                "publisher": "Yahoo Finance",
+                "date": entry.get("published", "")
+            })
+
+        print(
+            f"Ticker={ticker}, "
+            f"news_count={len(news_items) if news_items else 0}"
+        )
+        
+        return {
+            "ticker": ticker.upper(),
+            "news": news_items
+        }
+    except Exception as e:
+        print(f"Stock news error for {ticker}: {e}")
+        return {"ticker": ticker, "news": [], "error": str(e)}
+
 async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: float = 12.0) -> dict:
     cached = await cache_get(cache_key)
     if cached:
@@ -584,23 +640,61 @@ async def cached_or_fetch(cache_key: str, fetcher, fallback: dict, timeout: floa
     except Exception:
         return fallback
 
+# Helper to pull the absolute newest brief from your database
+async def get_latest_supabase_brief():
+    try:
+        # Queries the latest entry by timestamp order
+        response = supabase.table("daily_briefs") \
+                        .select("created_at, brief_data") \
+                        .order("created_at", desc=True) \
+                        .limit(1) \
+                        .execute()
+        
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+    except Exception as e:
+        print(f"Error reading cache from Supabase: {e}")
+    return None
+
+# Helper to commit a freshly generated brief asset to the database
+async def save_brief_to_supabase(brief_json_data):
+    try:
+        supabase.table("daily_briefs") \
+                .insert({"brief_data": brief_json_data}) \
+                .execute()
+        print("Successfully cached fresh brief to Supabase.")
+    except Exception as e:
+        print(f"Error writing cache to Supabase: {e}")
+
 @app.get("/api/brief")
 async def get_brief(name: str = "Jeremy"):
+    # 1. Check local time context for dynamic greetings
+    now = datetime.now(timezone.utc) # Using UTC to safely compare database timestamps
     
-    # Create a 3-hour bucket (0 to 7) based on current hour
-    now = datetime.now(SGT)
-    today = now.strftime("%Y-%m-%d")
-    time_window = now.hour // 3  
+    # Calculate SGT hour for greeting personalization mapping
+    sgt_hour = (now + timedelta(hours=8)).hour
+    greeting = "morning" if sgt_hour < 12 else "afternoon" if sgt_hour < 17 else "evening"
+
+    # 2. Look up the persistent cache asset from Supabase
+    latest_record = await get_latest_supabase_brief()
     
-    # Append the window to the cache key
-    cache_key = f"brief_{today}_w{time_window}"
-    print(f"Generating brief for {today} (Window {time_window})")
+    if latest_record:
+        created_at = datetime.fromisoformat(latest_record["created_at"].replace("Z", "+00:00"))
+        
+        # Check if the cache file is fresher than 3 hours (180 minutes)
+        if now - created_at < timedelta(hours=3):
+            print("Persistent Cache Hit! Fetching asset from Supabase.")
+            cached_result = latest_record["brief_data"]
+            
+            # Deep-copy dictionary and inject user greeting before serving
+            response_data = dict(cached_result)
+            if "brief" in response_data:
+                response_data["brief"] = f"Good {greeting}, {name}. {response_data['brief']}"
+            return response_data
 
-    cached = await cache_get(cache_key)
-    if cached:
-        return cached
+    print("Cache Miss or expired asset. Launching data gather and Gemini engine...")
 
-    # Fetch articles, weather, and market concurrently.
+    # 3. Cache Miss Flow: Concurrently fetch your basic dependencies
     articles, market_data, weather_data = await asyncio.gather(
         _fetch_articles(),
         cached_or_fetch("market_v3", get_market, {"market": {}}, timeout=12.0),
@@ -611,7 +705,7 @@ async def get_brief(name: str = "Jeremy"):
         result = {
             "brief": f"Good morning, {name}. Set GEMINI_API_KEY to enable AI briefs.",
             "weather_tip": "Check the weather before heading out.",
-            "news_summary": {"bullets": {"world":[], "singapore":[], "finance":[]},
+            "news_summary": {"bullets": {"world":[], "singapore":[], "finance":[], "tech":[]},
                              "sentiment": "neutral", "top_theme": "—", "key_entities": []},
             "articles": articles[:12], "timestamp": datetime.now(SGT).isoformat(),
         }
@@ -624,7 +718,7 @@ async def get_brief(name: str = "Jeremy"):
         if cat in headlines_by_cat and len(headlines_by_cat[cat]) < 3:
             headlines_by_cat[cat].append(a["title"])
     hl_text = "\n".join(f"[{cat.upper()}] {t}"
-                         for cat, titles in headlines_by_cat.items() for t in titles)
+                        for cat, titles in headlines_by_cat.items() for t in titles)
 
     mkt_lines = [
         f"{n}: {md['price']} ({'▲' if md['up'] else '▼'}{abs(md['change_pct'])}%)"
@@ -639,14 +733,12 @@ async def get_brief(name: str = "Jeremy"):
                f"rain {wd.get('rain_prob')}%, high {wd.get('max_temp')}°C, "
                f"AQI {aq.get('us_aqi','?')} ({aq.get('label','?')})")
 
-    hour = datetime.now(SGT).hour
-    greeting = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
-
-    prompt = f"""You are a sharp morning briefing AI for someone in Singapore.
+    # Build the prompt payload
+    prompt = f"""You are a sharp executive briefing AI for a user named {name} in Singapore.
 Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
 
 {{
-  "brief": "4-6 sentences. Start 'Good {greeting}, {name}.'. Include: (1) biggest market story with exact numbers and sector/company names; (2) two significant world or Singapore news stories with specific details — never vague; (3) practical Singapore weather tip.",
+  "brief": "4-6 sentences summarizing the overall news mood. DO NOT include any greetings or salutations like 'Good morning' or 'Hello'. Dive straight into the summary text. Include: (1) biggest market story with exact numbers and sector/company names; (2) two significant world or Singapore news stories with specific details — never vague; (3) practical Singapore weather tip.",
   "weather_tip": "One concise practical tip for today's Singapore weather — umbrella timing, heat, or air quality note.",
   "bullets": {{
     "world":     ["3 crisp bullets on top world news with specific names and details"],
@@ -663,65 +755,48 @@ MARKETS: {mkt_text}
 WEATHER: {wx_text}
 HEADLINES:\n{hl_text}"""
 
+    # 4. Fire the AI generation prompt
     try:
-            # Match the Gemini cache key to the same 3-hour window
-            gemini_cache_key = f"gemini_{today}_w{time_window}"
-
-            cached_ai = await cache_get(gemini_cache_key)
-
-            if cached_ai:
-                parsed = cached_ai
-            else:
-                try:
-                    text = await _generate(prompt, timeout=30.0)
-                    text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
-
-                    parsed = json.loads(text)
-
-                    # Set TTL to 180 minutes (3 hours)
-                    await cache_set(gemini_cache_key, parsed, ttl=180)
-
-                except Exception:
-                    raise
+        text = await _generate(prompt, timeout=30.0)
+        text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
+        
+        # Safely extract pure JSON layout bounds if Gemini slips up and uses backticks
+        start_idx, end_idx = text.find('{'), text.rfind('}')
+        if start_idx != -1 and end_idx != -1:
+            parsed = json.loads(text[start_idx:end_idx+1])
+        else:
+            parsed = json.loads(text)
     except Exception:
-        bullets_fb = {
-            "world":     [a["title"] for a in articles if a["category"] == "world"][:3],
-            "singapore": [a["title"] for a in articles if a["category"] == "singapore"][:3],
-            "finance":   [a["title"] for a in articles if a["category"] == "finance"][:3],
-            "tech":      [a["title"] for a in articles if a["category"] == "tech"][:2],
-        }
+        # Soft fallback if something goes wrong during parsing or generation
         parsed = {
-            "brief":        f"Good {greeting}, {name}. {mkt_lines[0]+'.' if mkt_lines else 'Markets are active.'}",
-            "weather_tip":  "Check the weather before heading out.",
-            "bullets":      bullets_fb,
-            "sentiment":    "neutral",
-            "top_theme":    "Global markets and news",
-            "key_entities": [],
+            "brief": "Global dashboard index assets are current.",
+            "weather_tip": "Check indicators before heading out.",
+            "bullets": {"world": [], "singapore": [], "finance": [], "tech": []},
+            "sentiment": "neutral", "top_theme": "Global Markets", "key_entities": []
         }
 
-    result = {
+    # 5. Pack everything up neatly into a standardized storage schema
+    compiled_asset = {
         "brief":       parsed.get("brief", ""),
         "weather_tip": parsed.get("weather_tip", ""),
         "news_summary": {
-            "bullets":      parsed.get("bullets", {"world":[],"singapore":[],"finance":[]}),
+            "bullets":      parsed.get("bullets", {"world":[], "singapore":[], "finance":[], "tech":[]}),
             "sentiment":    parsed.get("sentiment", "neutral"),
             "top_theme":    parsed.get("top_theme", ""),
             "key_entities": parsed.get("key_entities", []),
         },
         "market":    market_data.get("market", {}),
         "articles":  articles,
-        "timestamp": datetime.now(SGT).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    await cache_set(cache_key, result, ttl=180)
 
-    # Save daily snapshot (uses SGT date)
-    sent_map = {"bullish": 70, "bearish": 25, "cautious": 35, "neutral": 50}
-    score = sent_map.get(parsed.get("sentiment", "neutral"), 50)
-    flat_bullets = [b for cat in parsed.get("bullets", {}).values()
-                    for b in (cat if isinstance(cat, list) else [])]
-    await save_daily_snapshot(market_data, score, parsed.get("sentiment","neutral"),
-                               parsed.get("top_theme",""), parsed.get("key_entities",[]), flat_bullets)
-    return result
+    # 6. Save directly to your global Supabase vault for future visitors
+    await save_brief_to_supabase(compiled_asset)
+
+    # 7. Deliver tailored personal details out to your user dashboard instance
+    final_output = dict(compiled_asset)
+    final_output["brief"] = f"Good {greeting}, {name}. {final_output['brief']}"
+    return final_output
 
 @app.get("/api/sentiment")
 async def get_sentiment():
@@ -840,19 +915,29 @@ async def chat(req: ChatRequest):
         return {"response": "GEMINI_API_KEY not configured.", "sources": []}
 
     today_context, sources = "", []
-    today = datetime.now(SGT).strftime("%Y-%m-%d")
-    brief_cache = await cache_get(f"brief_{today}")
-    if brief_cache:
+    
+    # FIX: Query using the exact same database engine layout that your dashboard uses
+    latest_record = await get_latest_supabase_brief()
+    if latest_record:
+        brief_cache = latest_record.get("brief_data", {})
         ns  = brief_cache.get("news_summary", {})
         art = brief_cache.get("articles", [])
+        
         mkt_str = " | ".join(
-            f"{n}:{md['price']}({'▲' if md.get('up') else '▼'}{abs(md.get('change_pct',0))}%)"
+            f"{n}: {md['price']} ({'▲' if md.get('up') else '▼'}{abs(md.get('change_pct',0))}%)"
             for n, md in (brief_cache.get("market") or {}).items() if md.get("price")
         )
         bullets_obj = ns.get("bullets", {})
-        bullets_flat = [b for cat in bullets_obj.values()
-                        for b in (cat if isinstance(cat, list) else [])]
+        
+        # Flatten your metrics categories smoothly
+        bullets_flat = []
+        if isinstance(bullets_obj, dict):
+            for cat, items in bullets_obj.items():
+                if isinstance(items, list):
+                    bullets_flat.extend(items)
+                    
         hl = "\n".join(f"- [{a.get('category','?').upper()}] {a.get('title','')}" for a in art[:14])
+        
         today_context = (f"=== TODAY (SGT) ===\nMarkets: {mkt_str}\n"
                          f"Sentiment: {ns.get('sentiment','?')} | Theme: {ns.get('top_theme','?')}\n"
                          f"Key points:\n" + "\n".join(f"- {b}" for b in bullets_flat) +
@@ -863,31 +948,44 @@ async def chat(req: ChatRequest):
     if history_context:
         sources.append("Historical records")
 
+    # Construct chat array targeting the modern structural format
     gem_history = []
     if today_context or history_context:
         ctx = "\n\n".join(filter(None, [today_context, history_context]))
         gem_history = [
-            {"role": "user",  "parts": [f"Here is my context:\n\n{ctx}"]},
-            {"role": "model", "parts": ["Understood. I have today's market data, news, and historical context. Ask away."]}
+            {"role": "user", "parts": [{"text": f"Here is my context:\n\n{ctx}"}]},
+            {"role": "model", "parts": [{"text": "Understood. I have today's market data, news, and historical context. Ask away."}]}
         ]
+        
     for msg in req.history[-8:]:
-        gem_history.append({"role": "user" if msg.role == "user" else "model",
-                             "parts": [msg.content]})
+        role = "user" if msg.role == "user" else "model"
+        gem_history.append({"role": role, "parts": [{"text": str(msg.content)}]})
+
+    # Append newest prompt block
+    gem_history.append({"role": "user", "parts": [{"text": str(req.message)}]})
 
     system = ("Sharp, concise financial assistant for a Singapore user. "
               "Be specific with numbers. 2-4 sentences unless a list is better. "
               "If the answer isn't in the context, say so honestly.")
+              
     try:
+        # Pass the system instruction parameter inside the generative config routing dict
         answer = await asyncio.wait_for(
-            asyncio.to_thread(_chat_sync, _get_model_name(), system, gem_history, req.message),
+            asyncio.to_thread(
+                client.models.generate_content,
+                model=_get_model_name(),
+                contents=gem_history,
+                config={"system_instruction": system} if system else None
+            ),
             timeout=28.0
         )
+        answer = answer.text.strip()
     except Exception as e:
-        msg = str(e)
-        if "429" in msg or "quota" in msg.lower() or "rate" in msg.lower():
+        msg = str(e).lower()
+        if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
             answer = "Gemini is rate-limited right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
         else:
-            answer = f"Sorry, I ran into an issue: {msg[:120]}"
+            answer = f"Sorry, I ran into an issue: {str(e)[:120]}"
 
     return {"response": answer, "sources": sources}
 
