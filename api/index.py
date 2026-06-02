@@ -701,21 +701,73 @@ async def get_brief(name: str = "Jeremy"):
         cached_or_fetch("weather_v3", get_weather, {}, timeout=12.0),
     )
 
-    # ... Your existing code strings for headlines, market markdown lines, 
-    # and the neutral prompt layout (remembering to ensure Gemini doesn't print greetings) ...
+    if not GEMINI_API_KEY:
+        result = {
+            "brief": f"Good morning, {name}. Set GEMINI_API_KEY to enable AI briefs.",
+            "weather_tip": "Check the weather before heading out.",
+            "news_summary": {"bullets": {"world":[], "singapore":[], "finance":[], "tech":[]},
+                             "sentiment": "neutral", "top_theme": "—", "key_entities": []},
+            "articles": articles[:12], "timestamp": datetime.now(SGT).isoformat(),
+        }
+        return result
+
+    # Build context strings
+    headlines_by_cat: dict = {"world":[], "singapore":[], "finance":[], "tech":[]}
+    for a in articles:
+        cat = a["category"]
+        if cat in headlines_by_cat and len(headlines_by_cat[cat]) < 3:
+            headlines_by_cat[cat].append(a["title"])
+    hl_text = "\n".join(f"[{cat.upper()}] {t}"
+                        for cat, titles in headlines_by_cat.items() for t in titles)
+
+    mkt_lines = [
+        f"{n}: {md['price']} ({'▲' if md['up'] else '▼'}{abs(md['change_pct'])}%)"
+        for n, md in market_data.get("market", {}).items() if md.get("price")
+    ]
+    mkt_text = " | ".join(mkt_lines[:6]) or "N/A"
+
+    wc = weather_data.get("current", {})
+    wd = weather_data.get("daily",   {})
+    aq = weather_data.get("air_quality", {})
+    wx_text = (f"{wc.get('temperature')}°C feels {wc.get('feels_like')}°C, "
+               f"rain {wd.get('rain_prob')}%, high {wd.get('max_temp')}°C, "
+               f"AQI {aq.get('us_aqi','?')} ({aq.get('label','?')})")
+
+    # Build the prompt payload
+    prompt = f"""You are a sharp executive briefing AI for a user named {name} in Singapore.
+Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
+
+{{
+  "brief": "4-6 sentences summarizing the overall news mood. DO NOT include any greetings or salutations like 'Good morning' or 'Hello'. Dive straight into the summary text. Include: (1) biggest market story with exact numbers and sector/company names; (2) two significant world or Singapore news stories with specific details — never vague; (3) practical Singapore weather tip.",
+  "weather_tip": "One concise practical tip for today's Singapore weather — umbrella timing, heat, or air quality note.",
+  "bullets": {{
+    "world":     ["3 crisp bullets on top world news with specific names and details"],
+    "singapore": ["3 crisp bullets on Singapore-specific news"],
+    "finance":   ["3 crisp bullets on market-moving company or sector news with numbers"],
+    "tech":      ["2 crisp bullets on major tech or AI news today"]
+  }},
+  "sentiment":    "bullish|bearish|neutral|cautious",
+  "top_theme":    "Dominant theme across all news in 6-9 words",
+  "key_entities": ["4-6 most prominent companies, people, or places today"]
+}}
+
+MARKETS: {mkt_text}
+WEATHER: {wx_text}
+HEADLINES:\n{hl_text}"""
 
     # 4. Fire the AI generation prompt
     try:
-        text = await _generate(prompt)
+        text = await _generate(prompt, timeout=30.0)
+        text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
         
-        # Safely extract pure JSON layout bounds
+        # Safely extract pure JSON layout bounds if Gemini slips up and uses backticks
         start_idx, end_idx = text.find('{'), text.rfind('}')
         if start_idx != -1 and end_idx != -1:
             parsed = json.loads(text[start_idx:end_idx+1])
         else:
-            raise ValueError("Invalid output format from LLM layout chain.")
+            parsed = json.loads(text)
     except Exception:
-        # Soft fallback if key is dead/broken during generation processing
+        # Soft fallback if something goes wrong during parsing or generation
         parsed = {
             "brief": "Global dashboard index assets are current.",
             "weather_tip": "Check indicators before heading out.",
@@ -863,19 +915,29 @@ async def chat(req: ChatRequest):
         return {"response": "GEMINI_API_KEY not configured.", "sources": []}
 
     today_context, sources = "", []
-    today = datetime.now(SGT).strftime("%Y-%m-%d")
-    brief_cache = await cache_get(f"brief_{today}")
-    if brief_cache:
+    
+    # FIX: Query using the exact same database engine layout that your dashboard uses
+    latest_record = await get_latest_supabase_brief()
+    if latest_record:
+        brief_cache = latest_record.get("brief_data", {})
         ns  = brief_cache.get("news_summary", {})
         art = brief_cache.get("articles", [])
+        
         mkt_str = " | ".join(
-            f"{n}:{md['price']}({'▲' if md.get('up') else '▼'}{abs(md.get('change_pct',0))}%)"
+            f"{n}: {md['price']} ({'▲' if md.get('up') else '▼'}{abs(md.get('change_pct',0))}%)"
             for n, md in (brief_cache.get("market") or {}).items() if md.get("price")
         )
         bullets_obj = ns.get("bullets", {})
-        bullets_flat = [b for cat in bullets_obj.values()
-                        for b in (cat if isinstance(cat, list) else [])]
+        
+        # Flatten your metrics categories smoothly
+        bullets_flat = []
+        if isinstance(bullets_obj, dict):
+            for cat, items in bullets_obj.items():
+                if isinstance(items, list):
+                    bullets_flat.extend(items)
+                    
         hl = "\n".join(f"- [{a.get('category','?').upper()}] {a.get('title','')}" for a in art[:14])
+        
         today_context = (f"=== TODAY (SGT) ===\nMarkets: {mkt_str}\n"
                          f"Sentiment: {ns.get('sentiment','?')} | Theme: {ns.get('top_theme','?')}\n"
                          f"Key points:\n" + "\n".join(f"- {b}" for b in bullets_flat) +
@@ -886,31 +948,44 @@ async def chat(req: ChatRequest):
     if history_context:
         sources.append("Historical records")
 
+    # Construct chat array targeting the modern structural format
     gem_history = []
     if today_context or history_context:
         ctx = "\n\n".join(filter(None, [today_context, history_context]))
         gem_history = [
-            {"role": "user",  "parts": [f"Here is my context:\n\n{ctx}"]},
-            {"role": "model", "parts": ["Understood. I have today's market data, news, and historical context. Ask away."]}
+            {"role": "user", "parts": [{"text": f"Here is my context:\n\n{ctx}"}]},
+            {"role": "model", "parts": [{"text": "Understood. I have today's market data, news, and historical context. Ask away."}]}
         ]
+        
     for msg in req.history[-8:]:
-        gem_history.append({"role": "user" if msg.role == "user" else "model",
-                             "parts": [msg.content]})
+        role = "user" if msg.role == "user" else "model"
+        gem_history.append({"role": role, "parts": [{"text": str(msg.content)}]})
+
+    # Append newest prompt block
+    gem_history.append({"role": "user", "parts": [{"text": str(req.message)}]})
 
     system = ("Sharp, concise financial assistant for a Singapore user. "
               "Be specific with numbers. 2-4 sentences unless a list is better. "
               "If the answer isn't in the context, say so honestly.")
+              
     try:
+        # Pass the system instruction parameter inside the generative config routing dict
         answer = await asyncio.wait_for(
-            asyncio.to_thread(_chat_sync, _get_model_name(), system, gem_history, req.message),
+            asyncio.to_thread(
+                client.models.generate_content,
+                model=_get_model_name(),
+                contents=gem_history,
+                config={"system_instruction": system} if system else None
+            ),
             timeout=28.0
         )
+        answer = answer.text.strip()
     except Exception as e:
         msg = str(e).lower()
         if "429" in msg or "quota" in msg or "resource_exhausted" in msg:
             answer = "Gemini is rate-limited right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
         else:
-            answer = f"Sorry, I ran into an issue: {msg[:120]}"
+            answer = f"Sorry, I ran into an issue: {str(e)[:120]}"
 
     return {"response": answer, "sources": sources}
 
