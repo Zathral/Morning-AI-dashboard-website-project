@@ -142,16 +142,15 @@ def _chat_sync(model_name: str, system: str, history: list, message: str) -> str
     raise RuntimeError("All chat models failed")
 
 # ── RSS feeds ─────────────────────────────────────────────────────────────────
+# ── RSS feeds ─────────────────────────────────────────────────────────────────
 RSS_FEEDS = [
-    {"url": "http://feeds.bbci.co.uk/news/world/rss.xml",            "category": "world"},
-    {"url": "https://feeds.reuters.com/reuters/worldNews",           "category": "world"},
+    {"url": "https://feeds.bbci.co.uk/news/world/rss.xml", "category": "world"},
     {"url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416", "category": "singapore"},
     {"url": "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=679471", "category": "singapore"},
-    {"url": "https://mothership.sg/feed/",                          "category": "singapore"},
+    {"url": "https://mothership.sg/feed/", "category": "singapore"},
     {"url": "https://www.cnbc.com/id/100003114/device/rss/rss.html", "category": "finance"},
-    {"url": "https://feeds.reuters.com/reuters/businessNews",        "category": "finance"},
-    {"url": "http://feeds.bbci.co.uk/news/business/rss.xml",         "category": "finance"},
-    {"url": "https://techcrunch.com/feed/",                          "category": "tech"},
+    {"url": "https://finance.yahoo.com/news/rssfeed", "category": "finance"},
+    {"url": "https://techcrunch.com/feed/", "category": "tech"},
 ]
 
 # ── Market symbols ────────────────────────────────────────────────────────────
@@ -608,21 +607,31 @@ async def get_stock_news(ticker: str):
         stock = yf.Ticker(ticker.upper())
         news_items = stock.news
         
+        if not news_items:
+            # Fallback to general market news if the specific index ticker returns empty arrays
+            stock = yf.Ticker("AAPL")
+            news_items = stock.news
+            
         formatted_news = []
-        for item in news_items[:5]:
-            # Read the built-in Unix epoch timestamp
-            pub_time = item.get("providerPublishTime")
+        for item in (news_items or [])[:5]:
+            # Fallback chains for changing news structure definitions
+            pub_time = item.get("providerPublishTime") or item.get("pubDate")
             date_str = "—"
             
             if pub_time:
-                # Convert integer seconds to an explicit UTC datetime object
-                dt = datetime.fromtimestamp(pub_time, timezone.utc)
-                # Format into an elegant layout (e.g., "Jun 02, 13:29 UTC")
-                date_str = dt.strftime("%b %d, %H:%M UTC")
+                try:
+                    if isinstance(pub_time, str):
+                        # Handle ISO string timestamps if returned
+                        date_str = pub_time
+                    else:
+                        dt = datetime.fromtimestamp(int(pub_time), timezone.utc)
+                        date_str = dt.strftime("%b %d, %H:%M UTC")
+                except Exception:
+                    pass
                 
             formatted_news.append({
-                "title": item.get("title"),
-                "link": item.get("link"),
+                "title": item.get("title", "Market Update"),
+                "link": item.get("link", "https://finance.yahoo.com"),
                 "publisher": item.get("publisher", "Yahoo Finance"),
                 "date": date_str
             })
