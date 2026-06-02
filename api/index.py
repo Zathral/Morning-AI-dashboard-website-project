@@ -8,7 +8,7 @@ import time
 import feedparser
 import yfinance as yf
 import httpx
-import google.generativeai as genai
+from google import genai
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -33,8 +33,7 @@ SUPABASE_KEY   = os.environ.get("SUPABASE_ANON_KEY", "")
 # Singapore timezone (UTC+8) — used throughout for correct local time comparisons
 SGT = timezone(timedelta(hours=8))
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 supabase = None
 if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
@@ -64,22 +63,26 @@ def _get_model_name() -> str:
     return _GEMINI_MODELS[0]
 
 def _generate_sync(prompt: str, model_name: str = None) -> str:
-    """Run Gemini synchronously — call via asyncio.to_thread to avoid blocking."""
-    name = model_name or _get_model_name()
-    for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
-        try:
-            model = genai.GenerativeModel(attempt_name)
-
-            for retry in range(1):
-                try:
-                    return model.generate_content(prompt).text
-                except Exception as e:
-                    if "429" in str(e):
-                        time.sleep(2 ** retry)
-                        continue
-                    raise
-        except Exception as e:
-            msg = str(e).lower()
+        if not client:
+            raise RuntimeError("Gemini Client is not initialized")
+        name = model_name or _get_model_name()
+        for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
+            try:
+                for retry in range(1):
+                    try:
+                      # Updated to modern generation syntax
+                        response = client.models.generate_content(
+                            model=attempt_name,
+                            contents=prompt
+                        )
+                        return response.text
+                    except Exception as e:
+                        if "429" in str(e):
+                            time.sleep(2 ** retry)
+                            continue
+                        raise
+            except Exception as e:
+                msg = str(e).lower()
 
             if "429" in msg:
                 raise RuntimeError("RATE_LIMIT")
@@ -88,7 +91,7 @@ def _generate_sync(prompt: str, model_name: str = None) -> str:
                 continue
 
             raise
-    raise RuntimeError("All Gemini models failed")
+        raise RuntimeError("All Gemini models failed")
 
 async def _generate(prompt: str, timeout: float = 30.0) -> str:
     """Async wrapper for Gemini with timeout. Safe for serverless."""
@@ -98,7 +101,8 @@ async def _generate(prompt: str, timeout: float = 30.0) -> str:
     )
 
 def _chat_sync(model_name: str, system: str, history: list, message: str) -> str:
-    """generate_content with multi-turn messages — no system_instruction (compatibility fix)."""
+    if not client:
+        raise RuntimeError("Gemini Client is not initialized")
     messages = []
     if system:
         messages += [
@@ -109,12 +113,17 @@ def _chat_sync(model_name: str, system: str, history: list, message: str) -> str
     messages.append({"role": "user", "parts": [message]})
     for attempt in [model_name] + [m for m in _GEMINI_MODELS if m != model_name]:
         try:
-            return genai.GenerativeModel(attempt).generate_content(messages).text.strip()
+            # Modern execution routing using structured message arrays
+            response = client.models.generate_content(
+                model=attempt,
+                contents=messages
+            )
+            return response.text.strip()
         except Exception as e:
             s = str(e).lower()
-            if "not found" in s or "404" in s: continue
-            if "429" in str(e) or "quota" in s: raise RuntimeError("RATE_LIMIT")
-            raise
+        if "not found" in s or "404" in s: continue
+        if "429" in str(e) or "quota" in s: raise RuntimeError("RATE_LIMIT")
+        raise
     raise RuntimeError("All chat models failed")
 
 # ── RSS feeds ─────────────────────────────────────────────────────────────────
