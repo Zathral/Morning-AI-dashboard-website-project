@@ -762,9 +762,36 @@ MARKETS: {mkt_text}
 WEATHER: {wx_text}
 HEADLINES:\n{hl_text}"""
 
-    # 4. Fire the AI generation prompt
+    # 4. Fire the AI generation prompt with a waterfall fallback loop
+    text = None
+    last_brief_error = ""
+    
+    for attempt_model in _GEMINI_MODELS:
+        try:
+            # Attempt generation using the cascading model list
+            raw_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    client.models.generate_content,
+                    model=attempt_model,
+                    contents=prompt
+                ),
+                timeout=30.0
+            )
+            text = raw_response.text.strip()
+            break  # Success! Break out of the waterfall loop.
+            
+        except Exception as e:
+            last_brief_error = str(e).lower()
+            # Catch Rate Limits (429), Model High Traffic Overloads (503), or Missing Models (404)
+            if any(err in last_brief_error for err in ["404", "not found", "429", "quota", "resource_exhausted", "503", "unavailable"]):
+                print(f"[Brief Cache Miss] Model {attempt_model} overloaded or missing. Cascading to next model...")
+                continue
+            break # Break immediately if it is an unrelated fatal code logic error
+
     try:
-        text = await _generate(prompt, timeout=30.0)
+        if not text:
+            raise ValueError(f"All models failed. Last error: {last_brief_error}")
+            
         text = re.sub(r"^```[a-z]*\n?", "", text).rstrip("```").strip()
         
         # Safely extract pure JSON layout bounds if Gemini slips up and uses backticks
@@ -773,10 +800,12 @@ HEADLINES:\n{hl_text}"""
             parsed = json.loads(text[start_idx:end_idx+1])
         else:
             parsed = json.loads(text)
-    except Exception:
-        # Soft fallback if something goes wrong during parsing or generation
+            
+    except Exception as e:
+        print(f"Brief generation completely failed: {e}")
+        # Soft fallback if every model drops offline simultaneously during high traffic
         parsed = {
-            "brief": "Global dashboard index assets are current.",
+            "brief": "Global dashboard index assets are current, though live AI summary compilation is handling high traffic. Review your core sector metrics below.",
             "weather_tip": "Check indicators before heading out.",
             "bullets": {"world": [], "singapore": [], "finance": [], "tech": []},
             "sentiment": "neutral", "top_theme": "Global Markets", "key_entities": []
@@ -997,21 +1026,20 @@ async def chat(req: ChatRequest):
         except Exception as e:
             last_error = str(e).lower()
             
-            # If the model is rate-limited (429) or doesn't exist/no access (404), try the next one!
-            if "404" in last_error or "not found" in last_error or "429" in last_error or "quota" in last_error or "resource_exhausted" in last_error:
+            # Catch Rate Limits (429), Model High Traffic Overloads (503), or Missing Models (404)
+            if any(err in last_error for err in ["404", "not found", "429", "quota", "resource_exhausted", "503", "unavailable"]):
+                print(f"Model {attempt_model} failed due to rate limit/traffic overload. Cascading down...")
                 continue
                 
-            # If it's a completely different API crash, stop trying
+            # If it's a completely different foundational API crash, stop trying
             break
 
     # Final error handling if ALL models in the list failed
     if not answer:
-        if "429" in last_error or "quota" in last_error or "resource_exhausted" in last_error:
-            answer = "Gemini is rate-limited right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
+        if any(err in last_error for err in ["429", "quota", "resource_exhausted", "503", "unavailable"]):
+            answer = "Gemini is experiencing heavy traffic right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
         else:
             answer = f"Sorry, I ran into an issue: {last_error[:120]}"
-
-    return {"response": answer, "sources": sources}
 
 @app.get("/api/debug-feeds")
 async def debug_feeds():
