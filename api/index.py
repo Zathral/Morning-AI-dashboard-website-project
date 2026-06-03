@@ -939,12 +939,6 @@ async def get_stock_insights(tickers: str = "AAPL,NVDA,TSLA"):
     await cache_set(cache_key, result, ttl=60)
     return result
 
-@app.get("/api/presets")
-async def get_presets():
-    return {"presets": {g: [{"symbol":s,"name":n} for s,n in items]
-                         for g, items in WATCHLIST_PRESETS.items()},
-            "defaults": DEFAULT_WATCHLIST}
-
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     if not GEMINI_API_KEY:
@@ -952,7 +946,7 @@ async def chat(req: ChatRequest):
 
     today_context, sources = "", []
     
-    # FIX: Query using the exact same database engine layout that your dashboard uses
+    # Query using the database engine layout that your dashboard uses
     latest_record = await get_latest_supabase_brief()
     if latest_record:
         brief_cache = latest_record.get("brief_data", {})
@@ -964,8 +958,6 @@ async def chat(req: ChatRequest):
             for n, md in (brief_cache.get("market") or {}).items() if md.get("price")
         )
         bullets_obj = ns.get("bullets", {})
-        
-        # Flatten your metrics categories smoothly
         bullets_flat = []
         if isinstance(bullets_obj, dict):
             for cat, items in bullets_obj.items():
@@ -984,21 +976,20 @@ async def chat(req: ChatRequest):
     if history_context:
         sources.append("Historical records")
 
-    # Construct chat array targeting the modern structural format
-    gem_history = []
+    # FIX: Build contents natively using standard text strings for multi-turn history.
+    # The SDK handles a sequential flat string chain robustly if passed explicitly.
+    conversation_prompt = ""
     if today_context or history_context:
         ctx = "\n\n".join(filter(None, [today_context, history_context]))
-        gem_history = [
-            {"role": "user", "parts": [{"text": f"Here is my context:\n\n{ctx}"}]},
-            {"role": "model", "parts": [{"text": "Understood. I have today's market data, news, and historical context. Ask away."}]}
-        ]
-        
-    for msg in req.history[-8:]:
-        role = "user" if msg.role == "user" else "model"
-        gem_history.append({"role": role, "parts": [{"text": str(msg.content)}]})
+        conversation_prompt += f"System Context:\n{ctx}\n\n"
 
-    # Append newest prompt block
-    gem_history.append({"role": "user", "parts": [{"text": str(req.message)}]})
+    # Append recent chat history logs
+    for msg in req.history[-8:]:
+        speaker = "User" if msg.role == "user" else "Assistant"
+        conversation_prompt += f"{speaker}: {msg.content}\n"
+
+    # Append the raw new message payload
+    conversation_prompt += f"User: {req.message}\nAssistant:"
 
     system = ("Sharp, concise financial assistant for a Singapore user. "
               "Be specific with numbers. 2-4 sentences unless a list is better. "
@@ -1006,40 +997,38 @@ async def chat(req: ChatRequest):
               
     answer = None
     last_error = ""
-    
-    # Waterfall fallback: try each model in order
+
+    # Waterfall fallback loop: Safely try each model in order
     for attempt_model in _GEMINI_MODELS:
         try:
-            # Pass the system instruction parameter inside the generative config routing dict
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     client.models.generate_content,
                     model=attempt_model,
-                    contents=gem_history,
+                    contents=conversation_prompt,
                     config={"system_instruction": system} if system else None
                 ),
                 timeout=28.0
             )
             answer = response.text.strip()
-            break  # Success! Stop trying other models.
+            break  # Success! Break out of the waterfall loop.
             
         except Exception as e:
             last_error = str(e).lower()
-            
-            # Catch Rate Limits (429), Model High Traffic Overloads (503), or Missing Models (404)
+            # Catch Rate Limits (429), Traffic Spikes (503), or Missing Previews (404)
             if any(err in last_error for err in ["404", "not found", "429", "quota", "resource_exhausted", "503", "unavailable"]):
-                print(f"Model {attempt_model} failed due to rate limit/traffic overload. Cascading down...")
+                print(f"[Chat] Model {attempt_model} hit an infrastructure barrier. Cascading down...")
                 continue
-                
-            # If it's a completely different foundational API crash, stop trying
-            break
+            break # Stop immediately on explicit code syntax errors
 
-    # Final error handling if ALL models in the list failed
+    # Final error formatting if the loop runs out of models
     if not answer:
         if any(err in last_error for err in ["429", "quota", "resource_exhausted", "503", "unavailable"]):
             answer = "Gemini is experiencing heavy traffic right now. Background widgets no longer use Gemini, so try the assistant again in a little while."
         else:
             answer = f"Sorry, I ran into an issue: {last_error[:120]}"
+
+    return {"response": answer, "sources": sources}
 
 @app.get("/api/debug-feeds")
 async def debug_feeds():
