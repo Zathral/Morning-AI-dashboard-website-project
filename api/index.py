@@ -72,29 +72,31 @@ def _get_model_name() -> str:
 def _generate_sync(prompt: str, model_name: str = None) -> str:
     if not client:
         raise RuntimeError("Gemini Client is not initialized")
+    
+    # Create an ordered list starting with the preferred model
     name = model_name or _get_model_name()
-    for attempt_name in [name] + [m for m in _GEMINI_MODELS if m != name]:
+    models_to_try = [name] + [m for m in _GEMINI_MODELS if m != name]
+    
+    last_error = ""
+    for attempt_name in models_to_try:
         try:
-            for retry in range(1):
-                try:
-                    response = client.models.generate_content(
-                        model=attempt_name,
-                        contents=prompt
-                    )
-                    return response.text
-                except Exception as e:
-                    if "429" in str(e):
-                        time.sleep(2 ** retry)
-                        continue
-                    raise
+            response = client.models.generate_content(
+                model=attempt_name,
+                contents=prompt
+            )
+            return response.text
         except Exception as e:
-            msg = str(e).lower()
-            if "429" in msg:
-                raise RuntimeError("RATE_LIMIT")
-            if "not found" in msg or "404" in msg:
+            last_error = str(e).lower()
+            
+            # Catch Rate Limits (429), Traffic Spikes (503), or Missing Previews (404)
+            if any(err in last_error for err in ["404", "not found", "429", "quota", "resource_exhausted", "503", "unavailable"]):
+                print(f"[Brief Generation] Model {attempt_name} hit an infrastructure barrier. Cascading down...")
                 continue
-            raise
-    raise RuntimeError("All Gemini models failed")
+                
+            # If it's a completely different foundational API crash, stop trying
+            break
+            
+    raise RuntimeError(f"All Gemini models failed to generate brief. Last error: {last_error}")
 
 async def _generate(prompt: str, timeout: float = 30.0) -> str:
     """Async wrapper for Gemini with timeout. Safe for serverless."""
