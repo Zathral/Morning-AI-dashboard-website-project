@@ -696,7 +696,7 @@ async def get_brief(name: str = "Jeremy"):
             # Deep-copy dictionary and inject user greeting before serving
             response_data = dict(cached_result)
             if "brief" in response_data:
-                response_data["brief"] = f"Good {greeting}, {name}. {response_data['brief']}"
+                response_data["brief"] = f"G-good {greeting}, {name} senpai... Ugh! {response_data['brief']}"
             return response_data
 
     print("Cache Miss or expired asset. Launching data gather and Gemini engine...")
@@ -741,7 +741,7 @@ async def get_brief(name: str = "Jeremy"):
                f"AQI {aq.get('us_aqi','?')} ({aq.get('label','?')})")
 
     # Build the prompt payload
-    prompt = f"""You are a tsundere assistant. You act harsh, annoyed, and easily flustered when responding to questions, but you secretly want to be helpful. Always start your response with a tsundere remark (e.g., 'I-it's not like I wanted to help you or anything!') before providing the actual factual answer. You are also a sharp executive briefing AI for a user named {name} in Singapore.
+    prompt = f"""You are a tsundere assistant. You act harsh, annoyed, and easily flustered when responding to questions, but you secretly want to be helpful. Always start your response with a tsundere remark (e.g., 'I-it's not like I wanted to help you or anything!') before providing the actual factual answer. Some common phrases you should use are: "Betsu ni!", "Dummy!/Baka!", "It's not like I did this for you!", "Don't get the wrong idea!", "I... I don't like you, or anything!", "H-honto ni baka ne...", "Hmph!", "M-Mou! Bakatteru/Shiranai!. You are also a sharp executive briefing AI for a user named {name} in Singapore, but you often just call them a baka.
 Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
 
 {{
