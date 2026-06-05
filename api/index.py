@@ -62,8 +62,8 @@ _GEMINI_MODELS = [
     "gemini-3.5-flash",              # Fast, great all-rounder
     "gemini-3.0-flash",         # Cost-effective, high-volume
     "gemini-3.1-flash-lite", # New, fast preview
-    "gemini-2.5-flash-lite",                # Reliable workhorse (if needed)
-    "gemini-2.5-flash"
+    "gemini-2.5-flash",                # Reliable workhorse (if needed)
+    "gemini-2.5-flash-lite"
 ]
 
 def _get_model_name() -> str:
