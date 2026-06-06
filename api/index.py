@@ -764,9 +764,10 @@ MARKETS: {mkt_text}
 WEATHER: {wx_text}
 HEADLINES:\n{hl_text}"""
 
-    # 4. Fire the AI generation prompt with a waterfall fallback loop
+# 4. Fire the AI generation prompt with a waterfall fallback loop
     text = None
     last_brief_error = ""
+    is_temporary = False  # <--- 1. NEW FLAG ADDED HERE
     
     for attempt_model in _GEMINI_MODELS:
         try:
@@ -805,9 +806,10 @@ HEADLINES:\n{hl_text}"""
             
     except Exception as e:
         print(f"Brief generation completely failed: {e}")
+        is_temporary = True  # <--- 2. FLAG TRIPPED ON TOTAL FAILURE
         # Soft fallback if every model drops offline simultaneously during high traffic
         parsed = {
-            "brief": "Global dashboard index assets are current, though live AI summary compilation is handling high traffic. Review your core sector metrics below.",
+            "brief": "Global dashboard index assets are current, though live AI summary compilation is handling high traffic. Refresh in a moment to retry.",
             "weather_tip": "Check indicators before heading out.",
             "bullets": {"world": [], "singapore": [], "finance": [], "tech": []},
             "sentiment": "neutral", "top_theme": "Global Markets", "key_entities": []
@@ -828,8 +830,11 @@ HEADLINES:\n{hl_text}"""
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    # 6. Save directly to your global Supabase vault for future visitors
-    await save_brief_to_supabase(compiled_asset)
+    # 6. Save directly to your global Supabase vault ONLY if it is not temporary
+    if not is_temporary:
+        await save_brief_to_supabase(compiled_asset)
+    else:
+        print("Skipped saving to Supabase because the brief generation failed (temporary state).")
 
     # 7. Deliver tailored personal details out to your user dashboard instance
     final_output = dict(compiled_asset)
