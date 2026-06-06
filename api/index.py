@@ -166,6 +166,7 @@ RSS_FEEDS = [
 MARKET_SYMBOLS = {
     "S&P 500": "^GSPC", "NASDAQ": "^IXIC", "STI": "^STI",
     "Bitcoin": "BTC-USD", "Gold": "GC=F", "Oil": "CL=F",
+    "Healthcare ETF": "XLV", # <--- ADD THIS LINE
 }
 WATCHLIST_PRESETS = {
     "mag7":    [("AAPL","Apple"),("MSFT","Microsoft"),("NVDA","NVIDIA"),
@@ -855,7 +856,7 @@ async def get_sentiment():
     score = max(0, min(100, int(50 + avg_change * 7 + (up_ratio - 0.5) * 35)))
     sector_map = {
         "tech": ["NASDAQ"],
-        "healthcare": [],
+        "healthcare": ["Healthcare ETF"], # <--- UPDATE THIS LINE
         "finance": ["S&P 500", "STI"],
         "commodities": ["Gold", "Oil", "Bitcoin"],
     }
